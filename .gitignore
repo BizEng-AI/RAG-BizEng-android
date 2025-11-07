@@ -1,0 +1,36 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Instruction and troubleshooting files (not part of actual code)
+ADB_SETUP_GUIDE.md
+APK_NO_ADB_NEEDED.md
+BUILD_APK_GUIDE.md
+NETWORK_OPTIONS_EXPLAINED.md
+PRE_APK_CHECKLIST.md
+QUICK_APK_BUILD.md
+QUICK_FIX_GUIDE.md
+FIX_HOTSPOT_CONNECTION.md
+FIX_ROLEPLAY_DUPLICATION.py
+FIXED_CHAT_ENDPOINT.py
+SERVER_ROLEPLAY_ENDPOINT.py
+
+# Troubleshooting scripts
+diagnose-connection.bat
+fix-firewall-NOW.bat
+fix-firewall.ps1
+verify-firewall.bat
+advanced-test.bat
+

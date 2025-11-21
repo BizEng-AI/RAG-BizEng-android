@@ -76,7 +76,14 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:2.3.9")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.9")
     implementation("io.ktor:ktor-client-logging:2.3.9")
+    implementation("io.ktor:ktor-client-auth:2.3.9")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // Security & Encrypted Storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.7.5")
 
     implementation("androidx.compose.material:material-icons-extended")
 
@@ -85,8 +92,29 @@ dependencies {
     kapt("com.google.dagger:hilt-compiler:2.52")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
+    // DataStore for lightweight key-value storage (auth/email)
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Room for offline-first local cache
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
+
     // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    // Unit Testing
+    testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.22")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("io.mockk:mockk-android:1.13.8")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("androidx.test:core:1.5.0")
+    testImplementation("androidx.test:runner:1.5.2")
+    testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("io.ktor:ktor-client-mock:2.3.9")
+    implementation("androidx.compose.material:material")
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.34.0")
 }

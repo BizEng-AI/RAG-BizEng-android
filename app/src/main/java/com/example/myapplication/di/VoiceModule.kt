@@ -17,10 +17,9 @@ import com.example.myapplication.voice.AzureTtsController
 object VoiceModule {
     @Provides @Singleton
     fun provideSpeechToTextController(@ApplicationContext ctx: Context): SpeechToTextController =
-        SpeechToTextController(ctx as Application)
+        SpeechToTextController(requireNotNull(ctx as? Application) { "Application context required" })
 
     @Provides @Singleton
     fun provideTextToSpeechController(@ApplicationContext ctx: Context): TextToSpeechController =
-        AzureTtsController(ctx as Application) as TextToSpeechController
+        AzureTtsController(requireNotNull(ctx as? Application) { "Application context required" })
 }
-

@@ -1,7 +1,7 @@
 package com.example.myapplication.data.remote
 
-import com.example.myapplication.core.network.KtorClientProvider
 import com.example.myapplication.data.remote.dto.*
+import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -13,8 +13,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import io.ktor.utils.io.*
 import java.io.File
 
-class ChatApi(private val baseUrl: String) {
-    private val client get() = KtorClientProvider.client
+class ChatApi(
+    private val client: HttpClient,
+    private val baseUrl: String
+) {
     private val json = Json { ignoreUnknownKeys = true }
 
     // SSE stream
@@ -45,51 +47,28 @@ class ChatApi(private val baseUrl: String) {
 
     // Free chat endpoint
     suspend fun chat(req: ChatReqDto): ChatRespDto {
-        android.util.Log.d("CHAT_API", "╔═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ CHAT REQUEST STARTING")
-        android.util.Log.d("CHAT_API", "╠═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ URL: $baseUrl/chat")
-        android.util.Log.d("CHAT_API", "║ Method: POST")
-        android.util.Log.d("CHAT_API", "║ Content-Type: application/json")
-        android.util.Log.d("CHAT_API", "╠═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ REQUEST BODY:")
-        android.util.Log.d("CHAT_API", "║ Messages count: ${req.messages.size}")
-        req.messages.forEachIndexed { index, msg ->
-            android.util.Log.d("CHAT_API", "║   [$index] role='${msg.role}' content='${msg.content.take(100)}${if(msg.content.length > 100) "..." else ""}'")
+        // Retry once on transient 'unexpected end of stream'
+        var lastError: Throwable? = null
+        repeat(2) { attempt ->
+            try {
+                val resp = client.post("$baseUrl/chat") {
+                    contentType(ContentType.Application.Json)
+                    setBody(req)
+                }
+                val raw = resp.bodyAsText()
+                if (!resp.status.isSuccess()) {
+                    throw IllegalStateException("HTTP ${resp.status.value}: " + raw.take(500))
+                }
+                return Json.decodeFromString<ChatRespDto>(raw)
+            } catch (t: Throwable) {
+                lastError = t
+                val msg = t.message ?: ""
+                val transient = msg.contains("unexpected end of stream", ignoreCase = true) || msg.contains("EOF", ignoreCase = true)
+                if (!transient || attempt == 1) throw t
+                android.util.Log.w("CHAT_API", "Transient stream error, retrying once... ${t.message}")
+            }
         }
-        android.util.Log.d("CHAT_API", "╠═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ Raw JSON payload: $req")
-        android.util.Log.d("CHAT_API", "╚═══════════════════════════════════════════════════════════")
-
-        val resp = client.post("$baseUrl/chat") {
-            contentType(ContentType.Application.Json)
-            setBody(req)
-        }
-
-        val raw = resp.bodyAsText()
-
-        android.util.Log.d("CHAT_API", "╔═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ CHAT RESPONSE RECEIVED")
-        android.util.Log.d("CHAT_API", "╠═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ Status Code: ${resp.status.value} ${resp.status.description}")
-        android.util.Log.d("CHAT_API", "║ Is Success: ${resp.status.isSuccess()}")
-        android.util.Log.d("CHAT_API", "╠═══════════════════════════════════════════════════════════")
-        android.util.Log.d("CHAT_API", "║ RESPONSE BODY:")
-        android.util.Log.d("CHAT_API", "║ $raw")
-        android.util.Log.d("CHAT_API", "╚═══════════════════════════════════════════════════════════")
-
-        if (!resp.status.isSuccess()) {
-            android.util.Log.e("CHAT_API", "❌ ERROR: HTTP ${resp.status.value}")
-            android.util.Log.e("CHAT_API", "❌ Response body: ${raw.take(500)}")
-            throw IllegalStateException("HTTP ${resp.status.value}: " + raw.take(500))
-        }
-
-        val decoded = Json.decodeFromString<ChatRespDto>(raw)
-        android.util.Log.d("CHAT_API", "✅ Successfully decoded response")
-        android.util.Log.d("CHAT_API", "✅ Answer length: ${decoded.answer.length} chars")
-        android.util.Log.d("CHAT_API", "✅ Sources count: ${decoded.sources.size}")
-
-        return decoded
+        throw lastError ?: IllegalStateException("Unknown chat failure")
     }
 
     // STT

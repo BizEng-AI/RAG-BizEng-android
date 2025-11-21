@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -161,9 +163,11 @@ private fun ExampleModeScreen(vm: PronunciationVm, state: PronunciationUiState) 
 
 @Composable
 private fun RecordModeScreen(vm: PronunciationVm, state: PronunciationUiState) {
+    val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -300,139 +304,112 @@ private fun RecordModeScreen(vm: PronunciationVm, state: PronunciationUiState) {
 
         // Results
         state.result?.let { result ->
-            LazyColumn(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item {
-                    Text(
-                        "Results:",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                Text(
+                    "Results:",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
 
-                // Overall score
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = when {
-                                result.pronunciationScore >= 90 -> Color(0xFF4CAF50).copy(alpha = 0.2f)
-                                result.pronunciationScore >= 70 -> Color(0xFFFFC107).copy(alpha = 0.2f)
-                                else -> MaterialTheme.colorScheme.errorContainer
+                // Overall score card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = when {
+                            result.pronunciationScore >= 90 -> Color(0xFF4CAF50).copy(alpha = 0.2f)
+                            result.pronunciationScore >= 70 -> Color(0xFFFFC107).copy(alpha = 0.2f)
+                            else -> MaterialTheme.colorScheme.errorContainer
+                        }
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "${result.pronunciationScore.toInt()}/100",
+                            style = MaterialTheme.typography.displayMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                result.pronunciationScore >= 90 -> Color(0xFF4CAF50)
+                                result.pronunciationScore >= 70 -> Color(0xFFFFC107)
+                                else -> MaterialTheme.colorScheme.error
                             }
                         )
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                "${result.pronunciationScore.toInt()}/100",
-                                style = MaterialTheme.typography.displayMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = when {
-                                    result.pronunciationScore >= 90 -> Color(0xFF4CAF50)
-                                    result.pronunciationScore >= 70 -> Color(0xFFFFC107)
-                                    else -> MaterialTheme.colorScheme.error
-                                }
-                            )
-                            Text("Overall Score", style = MaterialTheme.typography.bodyMedium)
-                        }
+                        Text("Overall Score", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
-                // What you said
-                item {
-                    Card {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(
-                                "You said:",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                result.transcript,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
-                    }
-                }
-
-                // Detailed scores
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            ScoreRow("Accuracy", result.accuracyScore)
-                            ScoreRow("Fluency", result.fluencyScore)
-                            ScoreRow("Completeness", result.completenessScore)
-                        }
-                    }
-                }
-
-                // Feedback (red message like in roleplay)
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                        )
-                    ) {
-                        Row(Modifier.padding(12.dp)) {
-                            Icon(
-                                Icons.Filled.Lightbulb,
-                                contentDescription = "Feedback",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                result.feedback,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                        }
-                    }
-                }
-
-                // Detailed Feedback Section (NEW)
-                result.detailedFeedback?.let { tips ->
-                    if (tips.isNotEmpty()) {
-                        item {
-                            DetailedFeedbackSection(detailedFeedback = tips)
-                        }
-                    }
-                }
-
-                // Word-by-word breakdown with IPA and phonemes
-                if (result.words.isNotEmpty()) {
-                    item {
+                // You said card
+                Card {
+                    Column(Modifier.padding(12.dp)) {
                         Text(
-                            "📝 Word Analysis",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            "You said:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
-
-                    items(result.words) { word ->
-                        // Show detailed breakdown for words that need practice
-                        if (word.accuracyScore < 80 || word.errorType != null) {
-                            PhonemeBreakdownCard(word)
-                        } else {
-                            // Simple card for good words
-                            SimpleWordCard(word)
-                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            result.transcript,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
                 }
 
-                item {
-                    Spacer(Modifier.height(16.dp))
+                // Detailed scores card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        ScoreRow("Accuracy", result.accuracyScore)
+                        ScoreRow("Fluency", result.fluencyScore)
+                        ScoreRow("Completeness", result.completenessScore)
+                    }
+                }
+
+                // Feedback card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Row(Modifier.padding(12.dp)) {
+                        Icon(
+                            Icons.Filled.Lightbulb,
+                            contentDescription = "Feedback",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            result.feedback,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+
+                // Word-level breakdown (if available)
+                result.words.takeIf { it.isNotEmpty() }?.let { words ->
+                    Spacer(Modifier.height(12.dp))
+                    Text("Word breakdown", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    words.forEach { w ->
+                        PhonemeBreakdownCard(w)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+
+                // Optional detailed feedback tips
+                result.detailedFeedback?.takeIf { it.isNotEmpty() }?.let { tips ->
+                    Spacer(Modifier.height(8.dp))
+                    DetailedFeedbackSection(tips)
                 }
             }
         }
@@ -748,4 +725,3 @@ private fun PhonemeChipsRow(phonemes: List<com.example.myapplication.data.remote
         }
     }
 }
-

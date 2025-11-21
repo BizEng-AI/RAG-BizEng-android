@@ -1,0 +1,2 @@
+Delete duplicate core/AppDispatchers.kt to unify dispatcher class in coroutines package.
+

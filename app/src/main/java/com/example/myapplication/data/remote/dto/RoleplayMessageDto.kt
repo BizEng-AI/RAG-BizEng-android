@@ -34,7 +34,7 @@ data class RoleplayStartRespDto(
 @Serializable
 data class RoleplayTurnReqDto(
     @SerialName("session_id") val sessionId: String,
-    val message: String  // Changed from student_message to message
+    val message: String  // server expects `message`
 )
 
 // Individual error in a correction
@@ -140,4 +140,3 @@ data class RoleplayRespDto(
     val correction: String? = null,
     val sources: List<String> = emptyList()
 )
-

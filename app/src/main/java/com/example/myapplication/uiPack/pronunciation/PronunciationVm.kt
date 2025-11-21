@@ -1,9 +1,11 @@
 package com.example.myapplication.uiPack.pronunciation
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -11,9 +13,11 @@ import com.example.myapplication.domain.repository.RagRepository
 import com.example.myapplication.voice.SpeechToTextController
 import com.example.myapplication.voice.TextToSpeechController
 import com.example.myapplication.voice.AudioRecorder
+import com.example.myapplication.di.CoroutinesModule.IODispatcher
 import java.io.File
 
 import com.example.myapplication.data.remote.dto.PronunciationResultDto
+import com.example.myapplication.data.repository.TrackingRepository
 
 data class PronunciationUiState(
     val inputText: String = "",
@@ -21,18 +25,22 @@ data class PronunciationUiState(
     val recording: Boolean = false,
     val assessing: Boolean = false,
     val error: String? = null,
-    val result: PronunciationResultDto? = null,  // Use DTO directly - it has all the new IPA fields
-    val showExampleMode: Boolean = true  // true = type & hear, false = record & assess
+    val result: PronunciationResultDto? = null,
+    val showExampleMode: Boolean = true,
+    val isSpeaking: Boolean = false,
+    val attemptTrackingId: String? = null // tracking attempt id
 )
 
 
 @HiltViewModel
 class PronunciationVm @Inject constructor(
-    app: Application,
+    @ApplicationContext private val appContext: Context,
     private val repo: RagRepository,
     private val stt: SpeechToTextController,
-    private val tts: TextToSpeechController
-) : AndroidViewModel(app) {
+    private val tts: TextToSpeechController,
+    private val trackingRepository: TrackingRepository,
+    @IODispatcher private val dispatcher: CoroutineDispatcher
+) : ViewModel() {
 
     private val _state = MutableStateFlow(PronunciationUiState())
 
@@ -54,6 +62,9 @@ class PronunciationVm @Inject constructor(
         "Could we reschedule our appointment?"
     )
 
+    private var lastSpeakAt: Long = 0L
+    private var attemptCompleted = false
+
     fun onInputChange(text: String) {
         _state.update { it.copy(inputText = text, error = null) }
     }
@@ -68,8 +79,19 @@ class PronunciationVm @Inject constructor(
             _state.update { it.copy(error = "Please enter a word or phrase first") }
             return
         }
+
+        // ALWAYS stop any ongoing TTS to prevent echo/overlap
+        tts.stop()
+
+        _state.update { it.copy(error = null, isSpeaking = true) }
         tts.speak(phrase)
         android.util.Log.d("PRONUNCIATION", "Speaking: $phrase")
+
+        // Reset speaking state after a short delay
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(300)
+            _state.update { it.copy(isSpeaking = false) }
+        }
     }
 
     fun onPracticeButtonClicked() {
@@ -91,12 +113,23 @@ class PronunciationVm @Inject constructor(
             return
         }
 
+        if (state.value.attemptTrackingId == null) {
+            viewModelScope.launch(dispatcher) {
+                val attemptRes = trackingRepository.startExercise(
+                    exerciseId = state.value.targetPhrase.ifBlank { "pron_${System.currentTimeMillis()}" },
+                    exerciseType = "pronunciation"
+                )
+                val id = attemptRes.getOrNull()?.id
+                if (id != null) _state.update { it.copy(attemptTrackingId = id) }
+            }
+        }
+
         android.util.Log.d("PRONUNCIATION", "═══════════════════════════════════════")
         android.util.Log.d("PRONUNCIATION", "STARTING PRONUNCIATION RECORDING")
         android.util.Log.d("PRONUNCIATION", "Target phrase: ${state.value.targetPhrase}")
 
         // Create WAV file in cache directory
-        val cacheDir = getApplication<Application>().cacheDir
+        val cacheDir = appContext.cacheDir ?: throw IllegalStateException("Cache directory unavailable")
         cacheDir.mkdirs() // Ensure cache directory exists
 
         val tempFile = File(cacheDir, "pronunciation_${System.currentTimeMillis()}.wav")
@@ -139,9 +172,8 @@ class PronunciationVm @Inject constructor(
     }
 
     private fun assessRecording(audioFile: File) {
-        viewModelScope.launch {
+        viewModelScope.launch(dispatcher) {
             _state.update { it.copy(assessing = true, error = null) }
-
             try {
                 android.util.Log.d("PRONUNCIATION", "═══════════════════════════════════════")
                 android.util.Log.d("PRONUNCIATION", "STARTING PRONUNCIATION ASSESSMENT")
@@ -160,6 +192,18 @@ class PronunciationVm @Inject constructor(
 
                 // Call server pronunciation assessment endpoint
                 val result = repo.assessPronunciation(audioFile, state.value.targetPhrase)
+                _state.update { it.copy(assessing = false, result = result) }
+                // Complete attempt with score after successful assessment
+                val id = state.value.attemptTrackingId
+                if (id != null && !attemptCompleted) {
+                    attemptCompleted = true
+                    trackingRepository.updateExercise(
+                        attemptId = id,
+                        status = "completed",
+                        score = result.pronunciationScore?.toFloat(),
+                        durationSec = null // auto-compute
+                    )
+                }
 
                 android.util.Log.d("PRONUNCIATION", "═══════════════════════════════════════")
                 android.util.Log.d("PRONUNCIATION", "✓ ASSESSMENT SUCCESSFUL")
@@ -207,6 +251,28 @@ class PronunciationVm @Inject constructor(
 
 
     fun resetToExampleMode() {
+        // Finish attempt if not already completed when user exits record mode without assessment
+        val id = state.value.attemptTrackingId
+        if (id != null && !attemptCompleted) {
+            attemptCompleted = true
+            viewModelScope.launch(dispatcher) {
+                if (state.value.result == null) {
+                    trackingRepository.abandonExercise(
+                        attemptId = id,
+                        exerciseId = state.value.targetPhrase.ifBlank { "pron_${System.currentTimeMillis()}" },
+                        exerciseType = "pronunciation",
+                        score = null
+                    )
+                } else {
+                    trackingRepository.updateExercise(
+                        attemptId = id,
+                        status = "completed",
+                        score = state.value.result?.pronunciationScore?.toFloat(),
+                        durationSec = null
+                    )
+                }
+            }
+        }
         _state.update {
             PronunciationUiState(
                 inputText = it.inputText,
@@ -218,6 +284,6 @@ class PronunciationVm @Inject constructor(
 
     fun stopTts() {
         tts.stop()
+        // Do not auto-complete here; completion handled on assessment or reset
     }
 }
-

@@ -27,15 +27,20 @@ object KtorClientProvider {
         }
 
         install(HttpTimeout) {
-            requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 10_000
-            socketTimeoutMillis = 30_000
+            // 🚀 EXTENDED TIMEOUTS FOR FLY.IO COLD START
+            // Fly.io can take 30-60 seconds to wake up from sleep
+            requestTimeoutMillis = 90_000  // 90 seconds (was 30)
+            connectTimeoutMillis = 30_000  // 30 seconds (was 10)
+            socketTimeoutMillis = 90_000   // 90 seconds (was 30)
         }
 
         install(ContentNegotiation) {
             json(Json {
                 ignoreUnknownKeys = true
-                prettyPrint = true  // Pretty print JSON for easier reading
+                isLenient = true
+                prettyPrint = true
+                encodeDefaults = true
+                coerceInputValues = true
             })
         }
     }

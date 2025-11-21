@@ -1,6 +1,6 @@
 package com.example.myapplication.data.remote
-import com.example.myapplication.core.network.KtorClientProvider
 import com.example.myapplication.data.remote.dto.*
+import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.bodyAsText
@@ -9,8 +9,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
 // data/remote/AskApi.kt
-class AskApi(private val baseUrl: String) {
-    private val client get() = KtorClientProvider.client
+class AskApi(
+    private val client: HttpClient,
+    private val baseUrl: String
+) {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun ask(body: AskReqDto): AskRespDto {

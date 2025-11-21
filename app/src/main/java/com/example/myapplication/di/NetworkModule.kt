@@ -1,16 +1,37 @@
 package com.example.myapplication.di
 
+import android.content.Context
+import com.example.myapplication.core.network.AuthenticatedClientProvider
+import com.example.myapplication.core.network.AuthInterceptor
+import com.example.myapplication.data.local.AuthManager
+import com.example.myapplication.data.local.AuthStorage
+import com.example.myapplication.data.local.EncryptedAuthStorage
+import com.example.myapplication.data.remote.AuthApi
+import com.example.myapplication.data.remote.TrackingApi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import javax.inject.Singleton
 import io.ktor.client.*
-import com.example.myapplication.core.network.KtorClientProvider
+import io.ktor.client.engine.android.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.serialization.kotlinx.json.*
+import kotlinx.serialization.json.Json
+import javax.inject.Named
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+
+    @Provides @Singleton
+    fun provideAuthStorage(@ApplicationContext context: Context): AuthStorage =
+        EncryptedAuthStorage(context)
+
+    @Provides @Singleton
+    fun provideAuthManager(storage: AuthStorage): AuthManager = AuthManager(storage)
+
     @Provides @Singleton
     fun provideBaseUrl(): String {
         // ========================================================================
@@ -50,16 +71,22 @@ object NetworkModule {
         //   SERVER_PORT = "8020"
         //   USE_HTTPS = false
         //
-        // FOR ONLINE DEPLOYMENT (ngrok/Railway/Render):
-        //   PRODUCTION_SERVER_IP = "abc123.ngrok.io" (without http:// or https://)
+        // FOR ONLINE DEPLOYMENT (Fly.io/ngrok/Railway/Render):
+        //   PRODUCTION_SERVER_IP = "bizeng-server.fly.dev" (without http:// or https://)
         //   SERVER_PORT = "" (leave empty)
         //   USE_HTTPS = true
         //
         // ========================================================================
 
-        val PRODUCTION_SERVER_IP = "colette-unvoluble-nonsynoptically.ngrok-free.dev"  // 👈 Your ngrok URL
+        // 🚀 PRODUCTION MODE - Fly.io Server
+        val PRODUCTION_SERVER_IP = "bizeng-server.fly.dev"  // 👈 Fly.io production URL
         val SERVER_PORT = ""  // 👈 Empty for online deployment
-        val USE_HTTPS = true  // 👈 ngrok uses HTTPS
+        val USE_HTTPS = true  // 👈 Fly.io uses HTTPS
+
+        // 🏠 LOCAL TESTING MODE (commented out - uncomment to test locally)
+        // val PRODUCTION_SERVER_IP = "192.168.1.60"  // Your computer's WiFi IP
+        // val SERVER_PORT = "8020"
+        // val USE_HTTPS = false
 
         val serverUrl = if (useLocalhost) {
             "http://localhost:$SERVER_PORT"  // Development only
@@ -103,6 +130,62 @@ object NetworkModule {
         return serverUrl
     }
 
+    /**
+     * Named basic client used for AuthApi to avoid circular DI with authenticated client.
+     */
     @Provides @Singleton
-    fun provideHttpClient(): HttpClient = KtorClientProvider.client
+    @Named("BasicClient")
+    fun provideBasicHttpClient(): HttpClient {
+        return HttpClient(Android) {
+            install(ContentNegotiation) {
+                json(Json { ignoreUnknownKeys = true })
+            }
+            expectSuccess = false
+        }
+    }
+
+    /**
+     * Provides AuthApi using the basic client (no auth interceptor to avoid circular dependency).
+     * The AuthApi is used BY the interceptor for token refresh.
+     */
+    @Provides @Singleton
+    fun provideAuthApi(
+        @Named("BasicClient") client: HttpClient,
+        baseUrl: String
+    ): AuthApi {
+        return AuthApi(client, baseUrl)
+    }
+
+    @Provides @Singleton
+    fun provideAuthInterceptor(
+        authManager: AuthManager,
+        authApi: AuthApi
+    ): AuthInterceptor = AuthInterceptor(authManager, authApi)
+
+    /**
+     * Provides the authenticated HttpClient with automatic token refresh.
+     * This client should be used for all API calls except AuthApi.
+     */
+    @Provides @Singleton
+    @Named("AuthenticatedClient")
+    fun provideAuthenticatedHttpClient(
+        authManager: AuthManager,
+        authApi: AuthApi
+    ): HttpClient {
+        return AuthenticatedClientProvider.create(
+            authManager,
+            authApi
+        )
+    }
+
+    /**
+     * Provides TrackingApi using the authenticated client (with auto token refresh).
+     */
+    @Provides @Singleton
+    fun provideTrackingApi(
+        @Named("AuthenticatedClient") client: HttpClient,
+        baseUrl: String
+    ): TrackingApi {
+        return TrackingApi(client, baseUrl)
+    }
 }

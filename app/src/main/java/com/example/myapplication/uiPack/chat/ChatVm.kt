@@ -1,7 +1,6 @@
 package com.example.myapplication.uiPack.chat
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -9,6 +8,9 @@ import com.example.myapplication.data.remote.dto.ChatMsgDto
 import com.example.myapplication.domain.repository.RagRepository
 import com.example.myapplication.voice.SpeechToTextController
 import com.example.myapplication.voice.TextToSpeechController
+import com.example.myapplication.data.repository.TrackingRepository
+import com.example.myapplication.di.CoroutinesModule.IODispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -22,22 +24,26 @@ data class UiMsg(
 data class ChatUiState(
     val messages: List<UiMsg> = emptyList(),
     val input: String = "",
-    val grounded: Boolean = true,    // "Ground in book" - default ON for RAG mode (Azure filter fixed on server)
+    val grounded: Boolean = true,
     val recording: Boolean = false,
     val sending: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val attemptTrackingId: String? = null // tracking attempt id
 )
 
 @HiltViewModel
 class ChatVm @Inject constructor(
-    app: Application,
-    private val repo: RagRepository,
-    private val stt: SpeechToTextController,
-    private val tts: TextToSpeechController
-) : AndroidViewModel(app) {
+     private val repo: RagRepository,
+     private val stt: SpeechToTextController,
+     private val tts: TextToSpeechController,
+     private val trackingRepository: TrackingRepository,
+     @IODispatcher private val dispatcher: CoroutineDispatcher
+) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
+
+    private var attemptCompleted = false
 
     fun onInputChange(v: String) = _state.update { it.copy(input = v, error = null) }
     fun toggleGrounding() = _state.update { it.copy(grounded = !it.grounded) }
@@ -50,7 +56,14 @@ class ChatVm @Inject constructor(
     }
 
     private fun sendInternal(text: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(dispatcher) {
+            // Start exercise attempt if first message
+            if (state.value.attemptTrackingId == null) {
+                val attemptRes = trackingRepository.startExercise("chat_session", "chat")
+                val id = attemptRes.getOrNull()?.id
+                if (id != null) _state.update { it.copy(attemptTrackingId = id) }
+            }
+
             android.util.Log.d("CHAT", "═══════════════════════════════════════")
             android.util.Log.d("CHAT", "SENDING CHAT MESSAGE")
             android.util.Log.d("CHAT", "User message: $text")
@@ -159,16 +172,36 @@ class ChatVm @Inject constructor(
         _state.update { it.copy(recording = false, input = "") }
     }
 
-    fun speakLast() {
-        state.value.messages.lastOrNull { it.role == "assistant" }?.text?.let(tts::speak)
-    }
-
     fun speakMessage(text: String) {
+        // Stop any ongoing TTS to prevent echo/overlap
+        tts.stop()
         tts.speak(text)
     }
 
     fun stopTts() {
         tts.stop()
+        // Optional: could trigger completion here, but better on screen dispose
+    }
+
+    fun completeAttemptIfNeeded() {
+        val id = state.value.attemptTrackingId
+        if (id != null && !attemptCompleted) {
+            attemptCompleted = true
+            viewModelScope.launch(dispatcher) {
+                val assistantReplies = state.value.messages.count { it.role == "assistant" && !it.streaming && it.text.isNotBlank() }
+                val abandoned = assistantReplies == 0
+                if (abandoned) {
+                    trackingRepository.abandonExercise(id, "chat_session", "chat", null)
+                } else {
+                    trackingRepository.updateExercise(
+                        attemptId = id,
+                        status = "completed",
+                        score = null,
+                        durationSec = null // auto-compute by repository
+                    )
+                }
+            }
+        }
     }
 
     private fun gen() = System.nanoTime().toString()

@@ -6,9 +6,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,109 +17,157 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.myapplication.ui.components.TypingIndicator
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(vm: ChatVm) {
     val state by vm.state.collectAsState()
 
-    // Stop TTS when leaving this screen
     DisposableEffect(Unit) {
         onDispose {
             vm.stopTts()
+            vm.completeAttemptIfNeeded()
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        // Top bar: “Ground in book” switch (RAG)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .imePadding()
+            .navigationBarsPadding()
+    ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Ground in book", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.width(8.dp))
             Switch(checked = state.grounded, onCheckedChange = { vm.toggleGrounding() })
             Spacer(Modifier.weight(1f))
-            if (state.error != null) Text(state.error!!, color = MaterialTheme.colorScheme.error)
         }
+        HorizontalDivider()
 
-        // Messages
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
-            reverseLayout = false
-        ) {
-            items(state.messages, key = { it.id }) { m ->
-                val bubbleColor = if (m.role == "user") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                val align = if (m.role == "user") Arrangement.End else Arrangement.Start
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = align) {
-                    Column {
-                        Box(
-                            Modifier.padding(vertical = 6.dp)
-                                .clip(MaterialTheme.shapes.large)
-                                .background(bubbleColor)
-                                .padding(12.dp)
-                                .widthIn(max = 320.dp)
-                        ) {
-                            Text(if (m.streaming) "…" else m.text)
-                        }
-                        // Voice button only for assistant messages that are not streaming
-                        if (m.role == "assistant" && !m.streaming && m.text.isNotBlank()) {
-                            IconButton(
-                                onClick = { vm.speakMessage(m.text) },
-                                modifier = Modifier.size(32.dp).padding(start = 4.dp)
+        if (state.messages.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Start the conversation by typing below",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(32.dp)
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(state.messages, key = { it.id }) { m ->
+                    val isUser = m.role == "user"
+                    val bubbleColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    val align = if (isUser) Arrangement.End else Arrangement.Start
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = align) {
+                        Column {
+                            Box(
+                                Modifier
+                                    .padding(vertical = 4.dp)
+                                    .clip(MaterialTheme.shapes.large)
+                                    .background(bubbleColor)
+                                    .padding(10.dp)
+                                    .widthIn(max = 340.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.VolumeUp,
-                                    contentDescription = "Speak message",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                if (m.streaming) TypingIndicator(Modifier.padding(vertical = 2.dp)) else Text(m.text)
+                            }
+                            if (!isUser && !m.streaming && m.text.isNotBlank()) {
+                                IconButton(
+                                    onClick = { vm.speakMessage(m.text) },
+                                    modifier = Modifier.size(28.dp).padding(start = 2.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "Speak message",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-            item { Spacer(Modifier.height(8.dp)) }
         }
 
-        // Input row with dynamic mic/send
-        Surface(tonalElevation = 3.dp) {
-            Row(
-                Modifier.fillMaxWidth().padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = state.input,
-                    onValueChange = vm::onInputChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message…") },
-                    singleLine = false,
-                    minLines = 1,
-                    maxLines = 5
-                )
-                Spacer(Modifier.width(8.dp))
-
-                val showSend = state.input.isNotBlank()
-                val iconTint = if (showSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
-                val bg = if (showSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
-
-                FilledIconButton(
-                    onClick = { if (showSend) vm.send() else vm.onMicTapped() },
-                    modifier = Modifier.size(48.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = bg)
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Column {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AnimatedContent(showSend, label = "send-mic") { send ->
-                        if (send) Icon(Icons.Filled.Send, contentDescription = "Send", tint = iconTint)
-                        else Icon(Icons.Filled.Mic, contentDescription = "Mic", tint = iconTint)
+                    TextField(
+                        value = state.input,
+                        onValueChange = vm::onInputChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Message…") },
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 5,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                            cursorColor = MaterialTheme.colorScheme.primary,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground
+                        )
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    val showSend = state.input.isNotBlank()
+                    FilledIconButton(
+                        onClick = { if (showSend) vm.send() else vm.onMicTapped() },
+                        modifier = Modifier.size(44.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = if (showSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        AnimatedContent(showSend, label = "send-mic") { send ->
+                            Icon(
+                                if (send) Icons.AutoMirrored.Filled.Send else Icons.Filled.Mic,
+                                contentDescription = if (send) "Send" else "Mic",
+                                tint = if (showSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
                     }
                 }
-            }
-            if (state.recording) {
-                Text(
-                    "Listening… tap mic to stop",
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    textAlign = TextAlign.Center,
-                    color = Color.Red
-                )
+                if (state.recording) {
+                    Text(
+                        "Listening… tap mic to stop",
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                state.error?.let { err ->
+                    Text(
+                        err,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
             }
         }
     }

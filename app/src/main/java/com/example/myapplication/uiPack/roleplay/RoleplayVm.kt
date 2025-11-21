@@ -1,14 +1,16 @@
 package com.example.myapplication.uiPack.roleplay
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import javax.inject.Inject
 import com.example.myapplication.data.remote.dto.RoleplayMessageDto
 import com.example.myapplication.domain.repository.RagRepository
 import com.example.myapplication.voice.SpeechToTextController
 import com.example.myapplication.voice.TextToSpeechController
+import com.example.myapplication.data.repository.TrackingRepository
+import com.example.myapplication.di.CoroutinesModule.IODispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -23,24 +25,26 @@ data class RoleplayUiMsg(
 data class RoleplayUiState(
     val messages: List<RoleplayUiMsg> = emptyList(),
     val input: String = "",
-    val scenario: String = "client_meeting",  // Default scenario
-    val useRag: Boolean = true,  // RAG-AI hybrid mode
+    val scenario: String = "client_meeting",
+    val useRag: Boolean = true,
     val recording: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
     val sessionStarted: Boolean = false,
-    val sessionId: String? = null,  // Track the session ID from server
-    val currentStage: String? = null,  // Track current stage of roleplay
-    val stageDescription: String? = null
+    val sessionId: String? = null,
+    val currentStage: String? = null,
+    val stageDescription: String? = null,
+    val attemptTrackingId: String? = null // tracking attempt id
 )
 
 @HiltViewModel
 class RoleplayVm @Inject constructor(
-    app: Application,
-    private val repo: RagRepository,
-    private val stt: SpeechToTextController,
-    private val tts: TextToSpeechController
-) : AndroidViewModel(app) {
+     private val repo: RagRepository,
+     private val stt: SpeechToTextController,
+     private val tts: TextToSpeechController,
+     private val trackingRepository: TrackingRepository,
+     @IODispatcher private val dispatcher: CoroutineDispatcher
+) : ViewModel() {
 
     private val _state = MutableStateFlow(RoleplayUiState())
     val state: StateFlow<RoleplayUiState> = _state.asStateFlow()
@@ -51,8 +55,11 @@ class RoleplayVm @Inject constructor(
         "client_meeting" to "Client Meeting",
         "customer_complaint" to "Customer Complaint",
         "team_meeting" to "Team Meeting",
-        "business_phone_call" to "Business Phone Call"
+        "business_call" to "Business Phone Call"  // Fixed: server expects "business_call" not "business_phone_call"
     )
+
+    private var attemptCompleted = false
+    private var lastTurnCompletedFlag = false
 
     fun onInputChange(v: String) = _state.update { it.copy(input = v, error = null) }
 
@@ -90,17 +97,21 @@ class RoleplayVm @Inject constructor(
             return
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(dispatcher) {
             _state.update { it.copy(sending = true, error = null) }
 
             try {
                 android.util.Log.d("DEBUG_ROLEPLAY", "Calling /roleplay/start with scenario: ${state.value.scenario}")
 
-                // Call /roleplay/start endpoint
                 val response = repo.startRoleplay(
                     scenarioId = state.value.scenario,
                     useRag = state.value.useRag
                 )
+
+                val attemptId = state.value.attemptTrackingId ?: trackingRepository
+                    .startExercise(state.value.scenario, "roleplay")
+                    .getOrNull()
+                    ?.id
 
                 android.util.Log.d("DEBUG_ROLEPLAY", "Session started successfully!")
                 android.util.Log.d("DEBUG_ROLEPLAY", "Session ID: ${response.sessionId}")
@@ -131,7 +142,8 @@ class RoleplayVm @Inject constructor(
                                 streaming = false
                             )
                         ),
-                        sending = false
+                        sending = false,
+                        attemptTrackingId = attemptId
                     )
                 }
 
@@ -157,6 +169,27 @@ class RoleplayVm @Inject constructor(
     }
 
     fun resetSession() {
+        val attemptId = state.value.attemptTrackingId
+        if (attemptId != null && !attemptCompleted) {
+            attemptCompleted = true
+            viewModelScope.launch {
+                if (lastTurnCompletedFlag) {
+                    trackingRepository.updateExercise(
+                        attemptId = attemptId,
+                        status = "completed",
+                        score = null,
+                        durationSec = null
+                    )
+                } else {
+                    trackingRepository.abandonExercise(
+                        attemptId = attemptId,
+                        exerciseId = state.value.scenario,
+                        exerciseType = "roleplay",
+                        score = null
+                    )
+                }
+            }
+        }
         _state.update {
             RoleplayUiState(
                 scenario = it.scenario,
@@ -183,7 +216,7 @@ class RoleplayVm @Inject constructor(
     }
 
     private fun sendInternal(text: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(dispatcher) {
             val sessionId = state.value.sessionId
             if (sessionId == null) {
                 android.util.Log.e("ROLEPLAY", "Cannot send message: No active session")
@@ -278,6 +311,7 @@ class RoleplayVm @Inject constructor(
                             streaming = false
                         )
                     }
+                    lastTurnCompletedFlag = response.isCompleted
                     s.copy(
                         messages = updated,
                         sending = false,
@@ -358,6 +392,8 @@ class RoleplayVm @Inject constructor(
     }
 
     fun speakMessage(text: String) {
+        // Stop any ongoing TTS to prevent echo/overlap
+        tts.stop()
         tts.speak(text)
     }
 
@@ -367,4 +403,3 @@ class RoleplayVm @Inject constructor(
 
     private fun gen() = System.nanoTime().toString()
 }
-

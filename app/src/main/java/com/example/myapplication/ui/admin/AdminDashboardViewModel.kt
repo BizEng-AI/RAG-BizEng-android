@@ -12,6 +12,7 @@ import com.example.myapplication.data.remote.dto.GroupActivitySummaryDto
 import com.example.myapplication.data.remote.dto.UserActivityResponse
 import com.example.myapplication.data.repository.AdminRepository
 import com.example.myapplication.di.CoroutinesModule.IODispatcher
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -40,6 +41,7 @@ data class AdminDashboardData(
 // New: sections for dashboard
 enum class AdminSection { Overview, Students, Groups, RecentAttempts }
 
+@HiltViewModel
 class AdminDashboardViewModel @Inject constructor(
     private val repository: AdminRepository,
     @IODispatcher private val dispatcher: CoroutineDispatcher
@@ -61,17 +63,19 @@ class AdminDashboardViewModel @Inject constructor(
     private var lastFetchAt = 0L
 
     init {
+        Log.d(TAG, "init: starting initial dashboard load")
         loadDashboard()
     }
 
     fun loadDashboard(force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - lastFetchAt < MIN_FETCH_INTERVAL_MS) {
-            Log.d(TAG, "⏱️ Skipping fetch (cached <60s)")
+        val now = System.currentTimeMillis()
+        if (!force && now - lastFetchAt < MIN_FETCH_INTERVAL_MS) {
+            Log.d(TAG, "⏱ Skipping fetch (cached <60s). now=${'$'}now lastFetchAt=${'$'}lastFetchAt")
             return
         }
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch(dispatcher) {
-            Log.d(TAG, "🚀 Loading admin dashboard (force=$force)")
+            Log.d(TAG, "🚀 Loading admin dashboard (force=${'$'}force)")
             _uiState.value = AdminDashboardUiState.Loading
 
             val overview = repository.getOverview()
@@ -96,18 +100,18 @@ class AdminDashboardViewModel @Inject constructor(
                     lastUpdatedAtMillis = System.currentTimeMillis()
                 )
                 lastFetchAt = data.lastUpdatedAtMillis
-                Log.d(TAG, "✅ Dashboard data loaded successfully")
+                Log.d(TAG, "✅ Dashboard data loaded successfully at ${'$'}lastFetchAt")
                 _uiState.value = AdminDashboardUiState.Success(data)
             } else {
                 val errorMessage = failures.first().exceptionOrNull()?.message ?: "Failed to load admin data"
-                Log.e(TAG, "❌ Dashboard load failed: $errorMessage")
+                Log.e(TAG, "❌ Dashboard load failed: ${'$'}errorMessage")
                 _uiState.value = AdminDashboardUiState.Error(errorMessage)
             }
         }
     }
 
     fun setSection(section: AdminSection) {
-        Log.d(TAG, "📑 Section selected: $section")
+        Log.d(TAG, "📄 Section selected: ${'$'}section")
         _selectedSection.value = section
     }
 
@@ -118,7 +122,7 @@ class AdminDashboardViewModel @Inject constructor(
 
     // Fetch individual user activity timeline
     suspend fun getUserActivity(userId: Long, days: Int = 30): Result<UserActivityResponse> {
-        Log.d(TAG, "📊 Loading user activity for userId=$userId, days=$days")
+        Log.d(TAG, "📈 Loading user activity for userId=${'$'}userId, days=${'$'}days")
         return repository.getUserActivity(userId, days)
     }
 }

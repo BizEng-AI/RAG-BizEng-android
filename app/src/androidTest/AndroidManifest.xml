@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- No custom application or activity overrides here so the tests
+         use the real app process and preserve the installed app/state. -->
+</manifest>

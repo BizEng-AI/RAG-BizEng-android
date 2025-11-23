@@ -17,16 +17,22 @@ class AuthInterceptorRetryHandler(
 ) : UnauthorizedRetryHandler {
     override suspend fun <T> runWithRefresh(block: suspend () -> T): T {
         return try {
+            Log.d("AdminRepository", "runWithRefresh: starting block")
             block()
         } catch (e: ClientRequestException) {
+            Log.w("AdminRepository", "runWithRefresh: caught ${'$'}{e.response.status}")
             if (e.response.status == HttpStatusCode.Unauthorized) {
+                Log.w("AdminRepository", "runWithRefresh: 401 Unauthorized, attempting token refresh")
                 val refreshSucceeded = authInterceptor.handleUnauthorized()
                 if (refreshSucceeded) {
+                    Log.d("AdminRepository", "runWithRefresh: refresh succeeded, retrying block")
                     block()
                 } else {
+                    Log.e("AdminRepository", "runWithRefresh: refresh failed, throwing session expired")
                     throw IllegalStateException("Session expired. Please log in again.")
                 }
             } else {
+                Log.e("AdminRepository", "runWithRefresh: non-401 error", e)
                 throw e
             }
         }
@@ -57,7 +63,7 @@ class AdminRepository @Inject constructor(
         executeWithRefresh("recent_attempts") { adminApi.getRecentAttempts(limit) }
 
     suspend fun getUserActivity(userId: Long, days: Int = 30): Result<UserActivityResponse> =
-        executeWithRefresh("user_activity/$userId") { adminApi.getUserActivity(userId, days) }
+        executeWithRefresh("user_activity/${'$'}userId") { adminApi.getUserActivity(userId, days) }
 
     suspend fun getUsersActivity(days: Int = 30): Result<List<UserActivitySummaryDto>> =
         executeWithRefresh("users_activity") { adminApi.getUsersActivity(days) }
@@ -69,15 +75,15 @@ class AdminRepository @Inject constructor(
         endpoint: String,
         block: suspend () -> T
     ): Result<T> = runCatching {
-        Log.d(TAG, "➡️ [$endpoint] Request started")
+        Log.d(TAG, "➡ [${'$'}endpoint] Request started")
         retryHandler.runWithRefresh {
             val result = block()
-            Log.d(TAG, "✅ [$endpoint] Request succeeded")
+            Log.d(TAG, "✅ [${'$'}endpoint] Request succeeded")
             result
         }
     }.also { result ->
         if (result.isFailure) {
-            Log.e(TAG, "❌ [$endpoint] Final result failed: ${result.exceptionOrNull()?.message}")
+            Log.e(TAG, "❌ [${'$'}endpoint] Final result failed: ${'$'}{result.exceptionOrNull()?.message}", result.exceptionOrNull())
         }
     }
 }

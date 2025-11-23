@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.example.myapplication.HiltTestRunner"
     }
 
     buildTypes {
@@ -117,4 +117,8 @@ dependencies {
     testImplementation("io.ktor:ktor-client-mock:2.3.9")
     implementation("androidx.compose.material:material")
     implementation("com.google.accompanist:accompanist-swiperefresh:0.34.0")
+
+    // Hilt testing for instrumentation tests
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.52")
+    kaptAndroidTest("com.google.dagger:hilt-compiler:2.52")
 }

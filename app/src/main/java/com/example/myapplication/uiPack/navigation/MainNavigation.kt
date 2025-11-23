@@ -52,6 +52,7 @@ import kotlinx.coroutines.delay
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import androidx.compose.runtime.rememberCoroutineScope
+import android.util.Log
 
 sealed class NavDestination(val route: String, val title: String, val icon: ImageVector) {
     object Splash : NavDestination("splash", "Splash", Icons.Filled.HourglassEmpty)
@@ -202,10 +203,19 @@ fun MainNavigation(
 
     // Back behavior
     BackHandler {
+        Log.d("MainNavigation", "Back pressed; selectedTab=${'$'}{selectedTab.route}, isAdmin=${'$'}isAdmin, isInAdminDetailView=${'$'}isInAdminDetailView, pronunciationRecordMode=${'$'}pronunciationRecordMode")
         when {
-            selectedTab == NavDestination.Admin && isInAdminDetailView -> { }
-            selectedTab == NavDestination.Pronunciation && pronunciationRecordMode -> { pronunciationVmRef?.resetToExampleMode() }
-            else -> onExit()
+            selectedTab == NavDestination.Admin && isInAdminDetailView -> {
+                Log.d("MainNavigation", "Back delegated to Admin detail screen")
+            }
+            selectedTab == NavDestination.Pronunciation && pronunciationRecordMode -> {
+                Log.d("MainNavigation", "Back resetting Pronunciation from record mode")
+                pronunciationVmRef?.resetToExampleMode()
+            }
+            else -> {
+                Log.d("MainNavigation", "Back calling onExit() from tab=${'$'}{selectedTab.route}")
+                onExit()
+            }
         }
     }
 
@@ -265,7 +275,10 @@ fun MainNavigation(
                 destinations.forEach { destination ->
                     NavigationBarItem(
                         selected = selectedTab == destination,
-                        onClick = { selectedTab = destination },
+                        onClick = {
+                            Log.d("MainNavigation", "Bottom nav click: ${'$'}{destination.route}, was=${'$'}{selectedTab.route}, isAdmin=${'$'}isAdmin")
+                            selectedTab = destination
+                        },
                         icon = {
                             Icon(
                                 imageVector = destination.icon,
@@ -299,9 +312,18 @@ fun MainNavigation(
                 .consumeWindowInsets(paddingValues)
         ) {
             when (selectedTab) {
-                NavDestination.Chat -> { val vm: ChatVm = hiltViewModel(); ChatScreen(vm = vm) }
-                NavDestination.Roleplay -> { val vm: RoleplayVm = hiltViewModel(); RoleplayScreen(vm = vm) }
+                NavDestination.Chat -> {
+                    Log.d("MainNavigation", "Rendering Chat tab")
+                    val vm: ChatVm = hiltViewModel()
+                    ChatScreen(vm = vm)
+                }
+                NavDestination.Roleplay -> {
+                    Log.d("MainNavigation", "Rendering Roleplay tab")
+                    val vm: RoleplayVm = hiltViewModel()
+                    RoleplayScreen(vm = vm)
+                }
                 NavDestination.Pronunciation -> {
+                    Log.d("MainNavigation", "Rendering Pronunciation tab")
                     val vm: PronunciationVm = hiltViewModel()
                     pronunciationVmRef = vm
                     val pState by vm.state.collectAsState()
@@ -309,19 +331,29 @@ fun MainNavigation(
                     PronunciationScreen(vm = vm)
                 }
                 NavDestination.Admin -> {
+                    Log.d("MainNavigation", "Rendering Admin tab; isAdmin=${'$'}isAdmin")
                     if (isAdmin) {
                         val adminVm: AdminDashboardViewModel = hiltViewModel()
-                        AdminDashboardScreen(viewModel = adminVm, onNavigationStateChange = { inDetail -> isInAdminDetailView = inDetail })
+                        Log.d("MainNavigation", "AdminDashboardViewModel resolved: ${'$'}adminVm")
+                        AdminDashboardScreen(
+                            viewModel = adminVm,
+                            onNavigationStateChange = { inDetail ->
+                                Log.d("MainNavigation", "Admin nav state change: inDetail=${'$'}inDetail")
+                                isInAdminDetailView = inDetail
+                            }
+                        )
                     } else {
-                        // Fallback to chat rather than blank screen if admin state changes under us
+                        Log.w("MainNavigation", "Non-admin user selected Admin tab; falling back to Chat")
                         selectedTab = NavDestination.Chat
-                        val vm: ChatVm = hiltViewModel(); ChatScreen(vm = vm)
+                        val vm: ChatVm = hiltViewModel()
+                        ChatScreen(vm = vm)
                     }
                 }
                 else -> {
-                    // Safety fallback: show Chat instead of blank/white screen on unexpected state
+                    Log.w("MainNavigation", "Unexpected tab=${'$'}{selectedTab.route}; falling back to Chat")
                     selectedTab = NavDestination.Chat
-                    val vm: ChatVm = hiltViewModel(); ChatScreen(vm = vm)
+                    val vm: ChatVm = hiltViewModel()
+                    ChatScreen(vm = vm)
                 }
             }
         }

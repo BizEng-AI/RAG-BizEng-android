@@ -13,6 +13,10 @@ import com.example.myapplication.di.CoroutinesModule.IODispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
+import com.example.myapplication.ui.common.UiErrorMapper
+import com.example.myapplication.ui.common.MicState
 
 data class UiMsg(
     val id: String,
@@ -25,7 +29,7 @@ data class ChatUiState(
     val messages: List<UiMsg> = emptyList(),
     val input: String = "",
     val grounded: Boolean = true,
-    val recording: Boolean = false,
+    val micState: MicState = MicState.Idle,
     val sending: Boolean = false,
     val error: String? = null,
     val attemptTrackingId: String? = null // tracking attempt id
@@ -44,6 +48,7 @@ class ChatVm @Inject constructor(
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var attemptCompleted = false
+    private var micPreSpeechInput: String = ""
 
     fun onInputChange(v: String) = _state.update { it.copy(input = v, error = null) }
     fun toggleGrounding() = _state.update { it.copy(grounded = !it.grounded) }
@@ -54,6 +59,8 @@ class ChatVm @Inject constructor(
         _state.update { it.copy(input = "") }
         sendInternal(text)
     }
+
+    private fun mapChatError(t: Throwable): String = UiErrorMapper.mapChatError(t)
 
     private fun sendInternal(text: String) {
         viewModelScope.launch(dispatcher) {
@@ -113,24 +120,14 @@ class ChatVm @Inject constructor(
                     s.copy(messages = updated, sending = false)
                 }
             } catch (t: Throwable) {
-                android.util.Log.e("CHAT", "═══════════════════════════════════════")
-                android.util.Log.e("CHAT", "❌ CHAT FAILED")
+                android.util.Log.e("CHAT", "══════════════════════════════════════════════════════")
+                android.util.Log.e("CHAT", "✖ CHAT FAILED")
                 android.util.Log.e("CHAT", "Error type: ${t.javaClass.simpleName}")
                 android.util.Log.e("CHAT", "Error message: ${t.message}")
                 android.util.Log.e("CHAT", "Stack trace:", t)
-                android.util.Log.e("CHAT", "═══════════════════════════════════════")
+                android.util.Log.e("CHAT", "══════════════════════════════════════════════════════")
 
-                val errorMsg = when {
-                    t.message?.contains("content management policy") == true || t.message?.contains("filtered") == true ->
-                        "❌ Azure content filter blocked this. Try turning OFF 'Ground in book' toggle for free chat mode, or rephrase your message."
-                    t.message?.contains("500") == true -> "Server error (500). Try turning OFF 'Ground in book' toggle or check server logs."
-                    t.message?.contains("404") == true -> "Endpoint not found (404). Check server is running."
-                    t.message?.contains("Model not found") == true -> "Azure model not found. Check AZURE_OPENAI_CHAT_DEPLOYMENT in server settings."
-                    t.message?.contains("offline") == true -> "Server offline. Update ngrok URL or start server."
-                    t.message?.contains("Connection refused") == true -> "Cannot connect to server."
-                    else -> "Error: ${t.message}"
-                }
-
+                val errorMsg = mapChatError(t)
                 _state.update { s ->
                     val updated = s.messages.toMutableList()
                     val lastIdx = updated.indexOfLast { it.role == "assistant" && it.streaming }
@@ -142,26 +139,45 @@ class ChatVm @Inject constructor(
     }
 
     fun onMicTapped() {
-        if (state.value.recording) stopRecording() else startRecording()
+        when (state.value.micState) {
+            MicState.Listening -> stopRecording()
+            MicState.Processing -> Unit
+            else -> startRecording()
+        }
+    }
+
+    private fun mergeSpeechWithBase(transcript: String): String {
+        val base = micPreSpeechInput
+        if (transcript.isBlank()) return base
+        if (base.isBlank()) return transcript
+        val needsSpace = !base.last().isWhitespace()
+        return buildString {
+            append(base)
+            if (needsSpace) append(' ')
+            append(transcript)
+        }
     }
 
     private fun startRecording() {
-        _state.update { it.copy(recording = true, error = null, input = "") }
+        micPreSpeechInput = state.value.input.trimEnd()
+        _state.update { it.copy(micState = MicState.Listening, error = null) }
         stt.start(
             onPartial = { partial ->
-                android.util.Log.d("STT_VM", "Partial: $partial")
-                _state.update { it.copy(input = partial) }
+                val normalized = partial.trim()
+                val nextInput = if (normalized.isBlank()) micPreSpeechInput else mergeSpeechWithBase(normalized)
+                _state.update { it.copy(input = nextInput) }
             },
             onFinal = { final ->
-                android.util.Log.d("STT_VM", "Final: $final")
-                _state.update { it.copy(recording = false, input = "") }
-                if (final.isNotBlank()) {
-                    sendInternal(final)
-                }
+                _state.update { it.copy(micState = MicState.Processing) }
+                val normalized = final.trim()
+                val nextInput = if (normalized.isBlank()) micPreSpeechInput else mergeSpeechWithBase(normalized)
+                micPreSpeechInput = ""
+                _state.update { it.copy(input = nextInput, micState = MicState.Idle) }
             },
             onError = { e ->
-                android.util.Log.e("STT_VM", "Error: $e")
-                _state.update { it.copy(recording = false, error = e, input = "") }
+                val sanitized = com.example.myapplication.ui.common.UiErrorMapper.mapChatError(Throwable(e))
+                micPreSpeechInput = ""
+                _state.update { it.copy(micState = MicState.Error, error = sanitized) }
             }
         )
     }
@@ -169,7 +185,8 @@ class ChatVm @Inject constructor(
     private fun stopRecording() {
         android.util.Log.d("STT_VM", "Manually stopping recording")
         stt.stop()
-        _state.update { it.copy(recording = false, input = "") }
+        micPreSpeechInput = ""
+        _state.update { it.copy(micState = MicState.Idle) }
     }
 
     fun speakMessage(text: String) {

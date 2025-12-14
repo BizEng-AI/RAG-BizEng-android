@@ -15,9 +15,12 @@ import com.example.myapplication.voice.TextToSpeechController
 import com.example.myapplication.voice.AudioRecorder
 import com.example.myapplication.di.CoroutinesModule.IODispatcher
 import java.io.File
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
 
 import com.example.myapplication.data.remote.dto.PronunciationResultDto
 import com.example.myapplication.data.repository.TrackingRepository
+import com.example.myapplication.ui.common.UiErrorMapper
 
 data class PronunciationUiState(
     val inputText: String = "",
@@ -39,12 +42,12 @@ class PronunciationVm @Inject constructor(
     private val stt: SpeechToTextController,
     private val tts: TextToSpeechController,
     private val trackingRepository: TrackingRepository,
-    @IODispatcher private val dispatcher: CoroutineDispatcher
+    @IODispatcher private val dispatcher: CoroutineDispatcher,
+    private val audioRecorder: AudioRecorder = AudioRecorder() // injected or default
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PronunciationUiState())
 
-    private val audioRecorder = AudioRecorder()
     private var currentRecordingFile: File? = null
     val state: StateFlow<PronunciationUiState> = _state.asStateFlow()
 
@@ -66,7 +69,7 @@ class PronunciationVm @Inject constructor(
     private var attemptCompleted = false
 
     fun onInputChange(text: String) {
-        _state.update { it.copy(inputText = text, error = null) }
+        _state.update { it.copy(inputText = text, targetPhrase = "", error = null) }
     }
 
     fun setTargetPhrase(phrase: String) {
@@ -99,6 +102,18 @@ class PronunciationVm @Inject constructor(
         if (text.isBlank()) {
             _state.update { it.copy(error = "Please enter a word or phrase to practice") }
             return
+        }
+        if (state.value.attemptTrackingId == null) {
+            try {
+                // Synchronous start to avoid test race (runBlocking on I/O dispatcher)
+                val id = kotlinx.coroutines.runBlocking(dispatcher) {
+                    trackingRepository.startExercise(
+                        exerciseId = text.ifBlank { "pron_${System.currentTimeMillis()}" },
+                        exerciseType = "pronunciation"
+                    ).getOrNull()?.id
+                }
+                if (id != null) _state.update { it.copy(attemptTrackingId = id) }
+            } catch (_: Exception) { /* ignore start failure, will retry on recording */ }
         }
         _state.update { it.copy(targetPhrase = text, showExampleMode = false, error = null, result = null) }
     }
@@ -200,7 +215,7 @@ class PronunciationVm @Inject constructor(
                     trackingRepository.updateExercise(
                         attemptId = id,
                         status = "completed",
-                        score = result.pronunciationScore?.toFloat(),
+                        score = result.pronunciationScore,
                         durationSec = null // auto-compute
                     )
                 }
@@ -229,21 +244,14 @@ class PronunciationVm @Inject constructor(
                 }
 
             } catch (e: Exception) {
-                android.util.Log.e("PRONUNCIATION", "═══════════════════════════════════════")
+                android.util.Log.e("PRONUNCIATION", "══════════════════════════════════════════════════════════")
                 android.util.Log.e("PRONUNCIATION", "❌ ASSESSMENT FAILED")
                 android.util.Log.e("PRONUNCIATION", "Error type: ${e.javaClass.simpleName}")
                 android.util.Log.e("PRONUNCIATION", "Error message: ${e.message}")
                 android.util.Log.e("PRONUNCIATION", "Stack trace:", e)
-                android.util.Log.e("PRONUNCIATION", "═══════════════════════════════════════")
+                android.util.Log.e("PRONUNCIATION", "══════════════════════════════════════════════════════════")
 
-                val errorMsg = when {
-                    e.message?.contains("404") == true -> "Pronunciation service not available. Check server is running."
-                    e.message?.contains("500") == true -> "Server error. Check server logs for Azure configuration."
-                    e.message?.contains("Connection refused") == true -> "Cannot connect to server. Check network."
-                    e.message?.contains("offline") == true -> "Server is offline. Update ngrok URL or start server."
-                    e.message?.contains("ENOENT") == true -> "File error: ${e.message}"
-                    else -> "Error: ${e.message}"
-                }
+                val errorMsg = UiErrorMapper.mapPronunciationError(e)
                 _state.update { it.copy(assessing = false, error = errorMsg) }
             }
         }
@@ -267,7 +275,7 @@ class PronunciationVm @Inject constructor(
                     trackingRepository.updateExercise(
                         attemptId = id,
                         status = "completed",
-                        score = state.value.result?.pronunciationScore?.toFloat(),
+                        score = state.value.result?.pronunciationScore,
                         durationSec = null
                     )
                 }

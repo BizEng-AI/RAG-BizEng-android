@@ -4,16 +4,41 @@ import android.util.Log
 import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
 
+object GuardrailMetrics {
+    private val counts = mutableMapOf<String, Int>()
+    @Synchronized fun increment(domain: String, classification: String) {
+        counts["$domain:$classification"] = counts.getOrDefault("$domain:$classification", 0) + 1
+    }
+    @Synchronized fun snapshot(): Map<String, Int> = counts.toMap()
+    @Synchronized fun reset() { counts.clear() }
+}
+
 /** Centralized, user-friendly error mapping to avoid drift across modules. */
 object UiErrorMapper {
     private const val TAG = "UiErrorMapper"
 
-    private fun telemetry(type: String, raw: String?) {
-        Log.d(TAG, "guardrail type=$type raw=$raw")
+    private fun telemetry(domain: String, raw: String?, classification: String) {
+        Log.d(TAG, "guardrail domain=$domain class=$classification raw=$raw")
+        GuardrailMetrics.increment(domain, classification)
     }
 
     private fun isMatch(raw: String, vararg needles: String): Boolean =
         needles.any { raw.contains(it, ignoreCase = true) }
+
+    private fun classify(raw: String): String = when {
+        raw.isBlank() -> "blank"
+        isMatch(raw.lowercase(), "timeout") -> "timeout"
+        isMatch(raw.lowercase(), "connection refused", "failed to connect") -> "connect"
+        isMatch(raw.lowercase(), "offline") -> "offline"
+        isMatch(raw.lowercase(), "401", "unauthorized") -> "auth"
+        isMatch(raw.lowercase(), "403") -> "forbidden"
+        isMatch(raw.lowercase(), "content management policy", "content policy", "filtered") -> "content_filter"
+        isMatch(raw.lowercase(), "model not found") -> "model_missing"
+        isMatch(raw.lowercase(), "404") -> "not_found"
+        isMatch(raw.lowercase(), "500", "internal server error") -> "server_error"
+        isMatch(raw.lowercase(), "enoent") -> "file"
+        else -> "other"
+    }
 
     private fun baseMap(domain: String, t: Throwable?): String {
         val raw = t?.message.orEmpty()
@@ -42,27 +67,13 @@ object UiErrorMapper {
                 "chat" -> "Something went wrong. Please try again."
                 "roleplay" -> "Something went wrong. Please try again."
                 "admin" -> "Failed to load dashboard. Please try again."
-                "auth" -> "Authentication failed. Please try again."
+                "auth" -> if (raw.contains("Invalid credentials", true) || raw.contains("Email already exists", true)) raw else "Authentication failed. Please try again."
                 else -> "Something went wrong. Please try again."
             }
         }
-        telemetry("$domain:${classify(raw)}", raw)
+        val classification = classify(raw)
+        telemetry(domain, raw, classification)
         return result
-    }
-
-    private fun classify(raw: String): String = when {
-        raw.isBlank() -> "blank"
-        isMatch(raw.lowercase(), "timeout") -> "timeout"
-        isMatch(raw.lowercase(), "connection refused", "failed to connect") -> "connect"
-        isMatch(raw.lowercase(), "offline") -> "offline"
-        isMatch(raw.lowercase(), "401", "unauthorized") -> "auth"
-        isMatch(raw.lowercase(), "403") -> "forbidden"
-        isMatch(raw.lowercase(), "content management policy", "content policy", "filtered") -> "content_filter"
-        isMatch(raw.lowercase(), "model not found") -> "model_missing"
-        isMatch(raw.lowercase(), "404") -> "not_found"
-        isMatch(raw.lowercase(), "500", "internal server error") -> "server_error"
-        isMatch(raw.lowercase(), "enoent") -> "file"
-        else -> "other"
     }
 
     // Domain specific wrappers
@@ -72,4 +83,3 @@ object UiErrorMapper {
     fun mapPronunciationError(t: Throwable?): String = baseMap("pronunciation", t)
     fun mapAuthError(t: Throwable?): String = baseMap("auth", t)
 }
-

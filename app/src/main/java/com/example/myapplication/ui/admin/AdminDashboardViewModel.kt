@@ -12,6 +12,7 @@ import com.example.myapplication.data.remote.dto.GroupActivitySummaryDto
 import com.example.myapplication.data.remote.dto.UserActivityResponse
 import com.example.myapplication.data.repository.AdminRepository
 import com.example.myapplication.di.CoroutinesModule.IODispatcher
+import com.example.myapplication.ui.common.UiErrorMapper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -19,7 +20,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.net.UnknownHostException
 import javax.inject.Inject
+import javax.net.ssl.SSLHandshakeException
 
 sealed interface AdminDashboardUiState {
     object Loading : AdminDashboardUiState
@@ -67,45 +70,48 @@ class AdminDashboardViewModel @Inject constructor(
         loadDashboard()
     }
 
+    // Replace mapAdminError logic with centralized mapper
+    private fun mapAdminError(t: Throwable?): String = UiErrorMapper.mapAdminError(t)
+
     fun loadDashboard(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!force && now - lastFetchAt < MIN_FETCH_INTERVAL_MS) {
-            Log.d(TAG, "⏱ Skipping fetch (cached <60s). now=${'$'}now lastFetchAt=${'$'}lastFetchAt")
+        if (!force && lastFetchAt != 0L && now - lastFetchAt < MIN_FETCH_INTERVAL_MS) {
+            Log.d(TAG, "⏱ Skipping fetch (cached <60s). now=$now lastFetchAt=$lastFetchAt")
             return
         }
+
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch(dispatcher) {
-            Log.d(TAG, "🚀 Loading admin dashboard (force=${'$'}force)")
+            Log.d(TAG, "🚀 Loading admin dashboard (force=$force)")
             _uiState.value = AdminDashboardUiState.Loading
-
-            val overview = repository.getOverview()
-            val attempts = repository.getAttemptsDaily()
-            val signups = repository.getUsersSignupsDaily()
-            val activeToday = repository.getActiveToday()
-            val recentAttempts = repository.getRecentAttempts(limit = 7)
-            val usersActivity = repository.getUsersActivity(days = 30)
-            val groupsActivity = repository.getGroupsActivity(days = 30)
-
-            val failures = listOf(overview, attempts, signups, activeToday, recentAttempts, usersActivity, groupsActivity)
-                .filter { it.isFailure }
-            if (failures.isEmpty()) {
-                val data = AdminDashboardData(
-                    overview = overview.getOrNull(),
-                    attempts = attempts.getOrDefault(emptyList()),
-                    signups = signups.getOrDefault(emptyList()),
-                    activeToday = activeToday.getOrNull(),
-                    recentAttempts = recentAttempts.getOrDefault(emptyList()),
-                    usersActivity = usersActivity.getOrDefault(emptyList()),
-                    groupsActivity = groupsActivity.getOrDefault(emptyList()),
-                    lastUpdatedAtMillis = System.currentTimeMillis()
-                )
-                lastFetchAt = data.lastUpdatedAtMillis
-                Log.d(TAG, "✅ Dashboard data loaded successfully at ${'$'}lastFetchAt")
-                _uiState.value = AdminDashboardUiState.Success(data)
-            } else {
-                val errorMessage = failures.first().exceptionOrNull()?.message ?: "Failed to load admin data"
-                Log.e(TAG, "❌ Dashboard load failed: ${'$'}errorMessage")
-                _uiState.value = AdminDashboardUiState.Error(errorMessage)
+            try {
+                val overview = repository.getOverview()
+                val attempts = repository.getAttemptsDaily()
+                val signups = repository.getUsersSignupsDaily()
+                val activeToday = repository.getActiveToday()
+                val recentAttempts = repository.getRecentAttempts(limit = 7)
+                val usersActivity = repository.getUsersActivity(days = 30)
+                val groupsActivity = repository.getGroupsActivity(days = 30)
+                val failures = listOf(overview, attempts, signups, activeToday, recentAttempts, usersActivity, groupsActivity).filter { it.isFailure }
+                if (failures.isEmpty()) {
+                    val data = AdminDashboardData(
+                        overview = overview.getOrNull(),
+                        attempts = attempts.getOrDefault(emptyList()),
+                        signups = signups.getOrDefault(emptyList()),
+                        activeToday = activeToday.getOrNull(),
+                        recentAttempts = recentAttempts.getOrDefault(emptyList()),
+                        usersActivity = usersActivity.getOrDefault(emptyList()),
+                        groupsActivity = groupsActivity.getOrDefault(emptyList()),
+                        lastUpdatedAtMillis = System.currentTimeMillis()
+                    )
+                    lastFetchAt = data.lastUpdatedAtMillis
+                    _uiState.value = AdminDashboardUiState.Success(data)
+                } else {
+                    val firstErr = failures.first().exceptionOrNull()
+                    _uiState.value = AdminDashboardUiState.Error(mapAdminError(firstErr))
+                }
+            } catch (t: Throwable) {
+                _uiState.value = AdminDashboardUiState.Error(mapAdminError(t))
             }
         }
     }

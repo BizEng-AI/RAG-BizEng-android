@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.repository.AuthRepository
 import com.example.myapplication.data.remote.auth.*
+import com.example.myapplication.ui.common.UiErrorMapper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,15 +42,7 @@ class AuthViewModel @Inject constructor(
                     onSuccess()
                 }
                 .onFailure { error ->
-                    val userMessage = when (error) {
-                        is InvalidCredentialsException -> "Incorrect email or password"
-                        is EmailAlreadyExistsException -> "Email already registered"
-                        is RateLimitException -> "Too many attempts. Please try again later"
-                        is ServerErrorException -> "Server error. Please try again"
-                        is NetworkErrorException -> "Network error. Check connection"
-                        is EmptyResponseException, is IncompleteTokenResponseException, is TokenParseException -> "Unexpected server response. Please try again"
-                        else -> error.message ?: "Login failed"
-                    }
+                    val userMessage = UiErrorMapper.mapAuthError(error)
                     _uiState.value = AuthUiState.Error(userMessage)
                 }
         }
@@ -73,14 +66,7 @@ class AuthViewModel @Inject constructor(
                     onSuccess()
                 }
                 .onFailure { error ->
-                    val userMessage = when (error) {
-                        is EmailAlreadyExistsException -> "Email already registered"
-                        is RateLimitException -> "Too many attempts. Please try again later"
-                        is ServerErrorException -> "Server error. Please try again"
-                        is NetworkErrorException -> "Network error. Check connection"
-                        is TokenParseException, is EmptyResponseException, is IncompleteTokenResponseException -> "Unexpected server response"
-                        else -> error.message ?: "Registration failed"
-                    }
+                    val userMessage = UiErrorMapper.mapAuthError(error)
                     _uiState.value = AuthUiState.Error(userMessage)
                 }
         }

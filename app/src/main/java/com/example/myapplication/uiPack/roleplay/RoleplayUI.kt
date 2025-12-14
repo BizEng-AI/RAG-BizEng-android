@@ -85,21 +85,41 @@ fun LegacyRoleplayScreen(vm: RoleplayVm) {
                                 if (m.streaming) TypingIndicator(Modifier.padding(vertical = 4.dp)) else Text(m.text)
                             }
                         }
+
+                        // Show feedback under USER messages in pinkish color
+                        if (isUser && m.correction != null) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = Color(0xFFFFE4E1) // Pinkish color (misty rose)
+                                    ),
+                                    modifier = Modifier
+                                        .padding(start = 40.dp, top = 4.dp)
+                                        .widthIn(max = 340.dp)
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Text(
+                                            "Feedback",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFD81B60) // Dark pink for title
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            m.correction,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF880E4F) // Deep pink for text
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Show speaker button under AI messages
                         if (!isUser && !m.streaming && m.text.isNotBlank()) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
                                 IconButton(onClick = { vm.speakMessage(m.text) }, modifier = Modifier.size(32.dp).padding(start = 4.dp)) {
                                     Icon(Icons.Filled.VolumeUp, contentDescription = "Speak", tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
-                        if (m.correction != null && !isUser) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                                    Column(Modifier.padding(12.dp)) {
-                                        Text("Feedback", style = MaterialTheme.typography.titleMedium)
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(m.correction ?: "")
-                                    }
                                 }
                             }
                         }

@@ -10,11 +10,12 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import javax.inject.Inject
 
 /**
  * Records audio to WAV file format for pronunciation assessment
  */
-class AudioRecorder {
+class AudioRecorder @Inject constructor() {
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
     private var recordingJob: Job? = null
@@ -22,7 +23,12 @@ class AudioRecorder {
     private val sampleRate = 16000 // Azure Speech Service prefers 16kHz
     private val channelConfig = AudioFormat.CHANNEL_IN_MONO
     private val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-    private val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat) * 2
+    private val bufferSize = try {
+        AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat).let { if (it > 0) it * 2 else 16000 }
+    } catch (e: Throwable) {
+        Log.w("AudioRecorder", "Using fallback buffer size due to init error: ${e.message}")
+        16000
+    }
 
     fun startRecording(outputFile: File, onError: (String) -> Unit) {
         if (isRecording) {
@@ -175,4 +181,3 @@ class AudioRecorder {
 
     fun isCurrentlyRecording(): Boolean = isRecording
 }
-

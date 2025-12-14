@@ -161,9 +161,60 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun getProfile(): Result<ProfileDto> = runCatching {
-        val accessToken = authManager.getAccessToken()
+        android.util.Log.d("AuthRepository", "🔵 getProfile() called")
+
+        var accessToken = authManager.getAccessToken()
             ?: throw IllegalStateException("No access token available")
-        authApi.getProfile(accessToken)
+
+        android.util.Log.d("AuthRepository", "🔑 Using access token: ${accessToken.take(20)}...")
+
+        try {
+            // First attempt with current token
+            authApi.getProfile(accessToken)
+        } catch (e: Exception) {
+            // Check if it's a 401 authentication error
+            if (e.message?.contains("401") == true || e.message?.contains("Authentication failed") == true) {
+                android.util.Log.w("AuthRepository", "⚠️ Got 401 error on getProfile, attempting token refresh...")
+
+                // Try to refresh the token
+                val refreshToken = authManager.getRefreshToken()
+                if (refreshToken != null) {
+                    android.util.Log.d("AuthRepository", "🔄 Refreshing token...")
+
+                    try {
+                        val refreshResult = refresh(refreshToken)
+
+                        if (refreshResult.isSuccess) {
+                            android.util.Log.d("AuthRepository", "✅ Token refresh successful, retrying getProfile...")
+
+                            // Get the new access token and retry
+                            accessToken = authManager.getAccessToken()
+                                ?: throw IllegalStateException("Access token missing after refresh")
+
+                            // Retry the profile request with new token
+                            return@runCatching authApi.getProfile(accessToken)
+                        } else {
+                            android.util.Log.e("AuthRepository", "❌ Token refresh failed: ${refreshResult.exceptionOrNull()?.message}")
+                            // Clear tokens since refresh failed
+                            authManager.clearTokens()
+                            throw IllegalStateException("Token refresh failed: ${refreshResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (refreshException: Exception) {
+                        android.util.Log.e("AuthRepository", "❌ Token refresh exception: ${refreshException.message}")
+                        authManager.clearTokens()
+                        throw IllegalStateException("Token refresh failed: ${refreshException.message}")
+                    }
+                } else {
+                    android.util.Log.e("AuthRepository", "❌ No refresh token available")
+                    authManager.clearTokens()
+                    throw IllegalStateException("No refresh token available for retry")
+                }
+            } else {
+                // Not a 401 error, rethrow
+                android.util.Log.e("AuthRepository", "❌ getProfile failed (non-401): ${e.message}")
+                throw e
+            }
+        }
     }
 
     fun isLoggedIn(): Boolean = authManager.isLoggedIn()

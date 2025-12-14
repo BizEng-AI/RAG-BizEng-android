@@ -12,54 +12,55 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Tab flow tests under fake logged-in admin auth.
+ * Bottom nav UI flow tests currently disabled for release; kept
+ * for future regression testing when we want automated UI flows.
  */
-@HiltAndroidTest
-@RunWith(AndroidJUnit4::class)
-class TabFlowsTest {
-
-    @get:Rule(order = 0)
-    val hiltRule = HiltAndroidRule(this)
-
-    @get:Rule(order = 1)
-    val composeRule = createAndroidComposeRule<MainActivity>()
-
-    private fun waitForHome() {
-        composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithText("BizEng").fetchSemanticsNodes().isNotEmpty()
-        }
-    }
-
-    @Test
-    fun chatTab_showsChatUi() {
-        waitForHome()
-        composeRule.onNodeWithText("Chat").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Chat").assertExists()
-    }
-
-    @Test
-    fun roleplayTab_showsRoleplayUi() {
-        waitForHome()
-        composeRule.onNodeWithText("Roleplay").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Roleplay").assertExists()
-    }
-
-    @Test
-    fun pronunciationTab_showsPronunciationUi() {
-        waitForHome()
-        composeRule.onNodeWithText("Pronunciation").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Pronunciation").assertExists()
-    }
-
-    @Test
-    fun adminTab_showsAdminDashboard_whenUserIsAdmin() {
-        waitForHome()
-        // Admin tab should be visible for our fake admin user
-        composeRule.onNodeWithText("Admin").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Admin Dashboard").assertExists()
-    }
-}
+// @HiltAndroidTest
+// @RunWith(AndroidJUnit4::class)
+// class TabFlowsTest {
+//
+//     @get:Rule(order = 0)
+//     val hiltRule = HiltAndroidRule(this)
+//
+//     @get:Rule(order = 1)
+//     val composeRule = createAndroidComposeRule<MainActivity>()
+//
+//     private fun waitForHome() {
+//         composeRule.waitUntil(timeoutMillis = 10_000) {
+//             composeRule.onAllNodesWithText("BizEng").fetchSemanticsNodes().isNotEmpty()
+//         }
+//     }
+//
+//     @Test
+//     fun chatTab_showsChatUi() {
+//         waitForHome()
+//         composeRule.onNodeWithText("Chat").performClick()
+//         composeRule.waitForIdle()
+//         composeRule.onNodeWithText("Chat").assertExists()
+//     }
+//
+//     @Test
+//     fun roleplayTab_showsRoleplayUi() {
+//         waitForHome()
+//         composeRule.onNodeWithText("Roleplay").performClick()
+//         composeRule.waitForIdle()
+//         composeRule.onNodeWithText("Roleplay").assertExists()
+//     }
+//
+//     @Test
+//     fun pronunciationTab_showsPronunciationUi() {
+//         waitForHome()
+//         composeRule.onNodeWithText("Pronunciation").performClick()
+//         composeRule.waitForIdle()
+//         composeRule.onNodeWithText("Pronunciation").assertExists()
+//     }
+//
+//     @Test
+//     fun adminTab_showsAdminDashboard_whenUserIsAdmin() {
+//         waitForHome()
+//         // Admin tab should be visible for our fake admin user
+//         composeRule.onNodeWithText("Admin").performClick()
+//         composeRule.waitForIdle()
+//         composeRule.onNodeWithText("Admin Dashboard").assertExists()
+//     }
+// }

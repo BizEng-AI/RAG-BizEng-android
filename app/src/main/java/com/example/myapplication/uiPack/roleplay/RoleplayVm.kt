@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import javax.inject.Inject
-import com.example.myapplication.data.remote.dto.RoleplayMessageDto
 import com.example.myapplication.domain.repository.RagRepository
 import com.example.myapplication.voice.SpeechToTextController
 import com.example.myapplication.voice.TextToSpeechController
@@ -13,6 +12,10 @@ import com.example.myapplication.data.repository.TrackingRepository
 import com.example.myapplication.di.CoroutinesModule.IODispatcher
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
+import com.example.myapplication.ui.common.UiErrorMapper
+import com.example.myapplication.ui.common.MicState
 
 data class RoleplayUiMsg(
     val id: String,
@@ -27,6 +30,8 @@ data class RoleplayUiState(
     val input: String = "",
     val scenario: String = "client_meeting",
     val useRag: Boolean = true,
+    val micState: MicState = MicState.Idle,
+    // remove old recording flag usage in UI; keep legacy for backward compatibility but not used
     val recording: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
@@ -39,11 +44,11 @@ data class RoleplayUiState(
 
 @HiltViewModel
 class RoleplayVm @Inject constructor(
-     private val repo: RagRepository,
-     private val stt: SpeechToTextController,
-     private val tts: TextToSpeechController,
-     private val trackingRepository: TrackingRepository,
-     @IODispatcher private val dispatcher: CoroutineDispatcher
+    private val repo: RagRepository,
+    private val stt: SpeechToTextController,
+    private val tts: TextToSpeechController,
+    private val trackingRepository: TrackingRepository,
+    @IODispatcher private val dispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RoleplayUiState())
@@ -60,6 +65,13 @@ class RoleplayVm @Inject constructor(
 
     private var attemptCompleted = false
     private var lastTurnCompletedFlag = false
+
+    private val MAX_INPUT_LEN = 500
+
+    // Remove custom mapRoleplayError; use centralized mapper
+    private fun mapRoleplayError(t: Throwable?): String = UiErrorMapper.mapRoleplayError(t)
+
+    private fun gen() = System.nanoTime().toString()
 
     fun onInputChange(v: String) = _state.update { it.copy(input = v, error = null) }
 
@@ -85,6 +97,144 @@ class RoleplayVm @Inject constructor(
 
         // Then start the session immediately
         startSession()
+    }
+
+    fun send() {
+        val text = state.value.input.trim()
+        if (text.isEmpty() || state.value.sending) return
+        if (text.length > MAX_INPUT_LEN) {
+            _state.update { it.copy(error = "Message too long. Please shorten (max $MAX_INPUT_LEN chars).") }
+            return
+        }
+        _state.update { it.copy(input = "") }
+        if (!state.value.sessionStarted) {
+            _state.update { it.copy(error = "No active session. Start a roleplay first.") }
+            return
+        }
+        sendInternal(text)
+    }
+
+    private fun sendInternal(text: String) {
+        viewModelScope.launch(dispatcher) {
+            val sessionId = state.value.sessionId ?: run {
+                _state.update { it.copy(error = "No active session. Please start a roleplay first.") }
+                return@launch
+            }
+
+            android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
+            android.util.Log.d("ROLEPLAY", "SENDING ROLEPLAY TURN")
+            android.util.Log.d("ROLEPLAY", "Session ID: $sessionId")
+            android.util.Log.d("ROLEPLAY", "Student message: $text")
+            android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
+
+            // Add user message
+            _state.update {
+                it.copy(
+                    sending = true,
+                    messages = it.messages + RoleplayUiMsg(id = gen(), role = "user", text = text)
+                )
+            }
+
+            // Add streaming assistant message placeholder
+            _state.update {
+                it.copy(
+                    messages = it.messages + RoleplayUiMsg(id = gen(), role = "assistant", text = "", streaming = true)
+                )
+            }
+
+            try {
+                // Call /roleplay/turn endpoint
+                val response = repo.submitRoleplayTurn(
+                    sessionId = sessionId,
+                    studentMessage = text
+                )
+
+                android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
+                android.util.Log.d("ROLEPLAY", "✓ ROLEPLAY TURN SUCCESSFUL")
+                android.util.Log.d("ROLEPLAY", "AI response: ${response.aiMessage}")
+                android.util.Log.d("ROLEPLAY", "Correction object RAW: ${response.correction}")
+                android.util.Log.d("ROLEPLAY", "Has errors: ${response.correction?.hasErrors}")
+                android.util.Log.d("ROLEPLAY", "Error count: ${response.correction?.errors?.size ?: 0}")
+                android.util.Log.d("ROLEPLAY", "Feedback field: ${response.correction?.feedback}")
+
+                // Log ALL correction fields for debugging
+                response.correction?.let { corr ->
+                    android.util.Log.d("ROLEPLAY", "--- CORRECTION OBJECT DETAILS ---")
+                    android.util.Log.d("ROLEPLAY", "  hasErrors: ${corr.hasErrors}")
+                    android.util.Log.d("ROLEPLAY", "  errors list: ${corr.errors}")
+                    android.util.Log.d("ROLEPLAY", "  feedback: ${corr.feedback}")
+                    android.util.Log.d("ROLEPLAY", "  errorType (legacy): ${corr.errorType}")
+                    android.util.Log.d("ROLEPLAY", "  original (legacy): ${corr.original}")
+                    android.util.Log.d("ROLEPLAY", "  corrected (legacy): ${corr.corrected}")
+                    android.util.Log.d("ROLEPLAY", "  explanation (legacy): ${corr.explanation}")
+                }
+
+                if (response.correction?.hasErrors == true) {
+                    android.util.Log.d("ROLEPLAY", "⚠️ ERRORS DETECTED IN USER MESSAGE:")
+                    response.correction.errors?.forEachIndexed { index, error ->
+                        android.util.Log.d("ROLEPLAY", "  Error ${index + 1}:")
+                        android.util.Log.d("ROLEPLAY", "    Type: ${error.type}")
+                        android.util.Log.d("ROLEPLAY", "    Wrong: '${error.incorrect}'")
+                        android.util.Log.d("ROLEPLAY", "    Correct: '${error.correct}'")
+                        android.util.Log.d("ROLEPLAY", "    Explanation: ${error.explanation}")
+                    }
+                    android.util.Log.d("ROLEPLAY", "  Feedback: ${response.correction.feedback}")
+                } else {
+                    android.util.Log.d("ROLEPLAY", "✓ No errors - message was correct (hasErrors=false)")
+                }
+                android.util.Log.d("ROLEPLAY", "Current stage: ${response.currentStage}")
+                android.util.Log.d("ROLEPLAY", "Completed: ${response.isCompleted}")
+
+                // Convert correction object to display string
+                val correctionText = response.correction?.toDisplayString()
+
+                android.util.Log.d("ROLEPLAY", "--- DISPLAY STRING CONVERSION ---")
+                if (correctionText != null) {
+                    android.util.Log.d("ROLEPLAY", "✅ Correction display text: '$correctionText'")
+                } else {
+                    android.util.Log.d("ROLEPLAY", "❌ toDisplayString() returned NULL - correction will NOT be shown!")
+                    android.util.Log.d("ROLEPLAY", "This means the correction format doesn't match any case in toDisplayString()")
+                }
+                android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
+
+                // Update with response
+                _state.update { s ->
+                    val updated = s.messages.toMutableList()
+
+                    // Update the streaming assistant message with AI's response AND attach correction to it
+                    val lastIdx = updated.indexOfLast { it.role == "assistant" && it.streaming }
+                    if (lastIdx >= 0) {
+                        updated[lastIdx] = updated[lastIdx].copy(
+                            text = response.aiMessage,
+                            streaming = false,
+                            correction = correctionText // Attach correction to assistant message
+                        )
+                    }
+
+                    lastTurnCompletedFlag = response.isCompleted
+                    s.copy(
+                        messages = updated,
+                        sending = false,
+                        currentStage = response.currentStage,
+                        stageDescription = null
+                    )
+                }
+
+                // If roleplay is completed, optionally speak completion message
+                if (response.isCompleted) {
+                    kotlinx.coroutines.delay(1000)
+                }
+
+            } catch (t: Throwable) {
+                val errorMsg = mapRoleplayError(t)
+                _state.update { s ->
+                    val updated = s.messages.toMutableList()
+                    val lastIdx = updated.indexOfLast { it.role == "assistant" && it.streaming }
+                    if (lastIdx >= 0) updated[lastIdx] = updated[lastIdx].copy(text = errorMsg, streaming = false)
+                    s.copy(messages = updated, sending = false, error = errorMsg)
+                }
+            }
+        }
     }
 
     fun startSession() {
@@ -172,7 +322,7 @@ class RoleplayVm @Inject constructor(
         val attemptId = state.value.attemptTrackingId
         if (attemptId != null && !attemptCompleted) {
             attemptCompleted = true
-            viewModelScope.launch {
+            viewModelScope.launch(dispatcher) {
                 if (lastTurnCompletedFlag) {
                     trackingRepository.updateExercise(
                         attemptId = attemptId,
@@ -193,194 +343,45 @@ class RoleplayVm @Inject constructor(
         _state.update {
             RoleplayUiState(
                 scenario = it.scenario,
-                useRag = it.useRag,
-                sessionId = null,
-                currentStage = null,
-                stageDescription = null
+                useRag = it.useRag
             )
         }
     }
 
+    private var micPreSpeechInput: String = ""
 
-    fun send() {
-        val text = state.value.input.trim()
-        if (text.isEmpty() || state.value.sending) return
-        _state.update { it.copy(input = "") }
-
-        if (!state.value.sessionStarted) {
-            android.util.Log.w("RoleplayVm", "Attempted to send without active session")
-            return
+    private fun mergeSpeechWithBase(transcript: String): String {
+        val base = micPreSpeechInput
+        if (transcript.isBlank()) return base
+        if (base.isBlank()) return transcript
+        val needsSpace = !base.last().isWhitespace()
+        return buildString {
+            append(base)
+            if (needsSpace) append(' ')
+            append(transcript)
         }
-
-        sendInternal(text)
-    }
-
-    private fun sendInternal(text: String) {
-        viewModelScope.launch(dispatcher) {
-            val sessionId = state.value.sessionId
-            if (sessionId == null) {
-                android.util.Log.e("ROLEPLAY", "Cannot send message: No active session")
-                _state.update { it.copy(error = "No active session. Please start a roleplay first.") }
-                return@launch
-            }
-
-            android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
-            android.util.Log.d("ROLEPLAY", "SENDING ROLEPLAY TURN")
-            android.util.Log.d("ROLEPLAY", "Session ID: $sessionId")
-            android.util.Log.d("ROLEPLAY", "Student message: $text")
-            android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
-
-            // Add user message
-            _state.update {
-                it.copy(
-                    sending = true,
-                    messages = it.messages + RoleplayUiMsg(id = gen(), role = "user", text = text)
-                )
-            }
-
-            // Add streaming assistant message placeholder
-            _state.update {
-                it.copy(
-                    messages = it.messages + RoleplayUiMsg(id = gen(), role = "assistant", text = "", streaming = true)
-                )
-            }
-
-            try {
-                // Call /roleplay/turn endpoint
-                val response = repo.submitRoleplayTurn(
-                    sessionId = sessionId,
-                    studentMessage = text
-                )
-
-                android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
-                android.util.Log.d("ROLEPLAY", "✓ ROLEPLAY TURN SUCCESSFUL")
-                android.util.Log.d("ROLEPLAY", "AI response: ${response.aiMessage}")
-                android.util.Log.d("ROLEPLAY", "Correction object RAW: ${response.correction}")
-                android.util.Log.d("ROLEPLAY", "Has errors: ${response.correction?.hasErrors}")
-                android.util.Log.d("ROLEPLAY", "Error count: ${response.correction?.errors?.size ?: 0}")
-                android.util.Log.d("ROLEPLAY", "Feedback field: ${response.correction?.feedback}")
-
-                // Log ALL correction fields for debugging
-                response.correction?.let { corr ->
-                    android.util.Log.d("ROLEPLAY", "--- CORRECTION OBJECT DETAILS ---")
-                    android.util.Log.d("ROLEPLAY", "  hasErrors: ${corr.hasErrors}")
-                    android.util.Log.d("ROLEPLAY", "  errors list: ${corr.errors}")
-                    android.util.Log.d("ROLEPLAY", "  feedback: ${corr.feedback}")
-                    android.util.Log.d("ROLEPLAY", "  errorType (legacy): ${corr.errorType}")
-                    android.util.Log.d("ROLEPLAY", "  original (legacy): ${corr.original}")
-                    android.util.Log.d("ROLEPLAY", "  corrected (legacy): ${corr.corrected}")
-                    android.util.Log.d("ROLEPLAY", "  explanation (legacy): ${corr.explanation}")
-                }
-
-                if (response.correction?.hasErrors == true) {
-                    android.util.Log.d("ROLEPLAY", "⚠️ ERRORS DETECTED IN USER MESSAGE:")
-                    response.correction.errors?.forEachIndexed { index, error ->
-                        android.util.Log.d("ROLEPLAY", "  Error ${index + 1}:")
-                        android.util.Log.d("ROLEPLAY", "    Type: ${error.type}")
-                        android.util.Log.d("ROLEPLAY", "    Wrong: '${error.incorrect}'")
-                        android.util.Log.d("ROLEPLAY", "    Correct: '${error.correct}'")
-                        android.util.Log.d("ROLEPLAY", "    Explanation: ${error.explanation}")
-                    }
-                    android.util.Log.d("ROLEPLAY", "  Feedback: ${response.correction.feedback}")
-                } else {
-                    android.util.Log.d("ROLEPLAY", "✓ No errors - message was correct (hasErrors=false)")
-                }
-                android.util.Log.d("ROLEPLAY", "Current stage: ${response.currentStage}")
-                android.util.Log.d("ROLEPLAY", "Completed: ${response.isCompleted}")
-
-                // Convert correction object to display string
-                val correctionText = response.correction?.toDisplayString()
-
-                android.util.Log.d("ROLEPLAY", "--- DISPLAY STRING CONVERSION ---")
-                if (correctionText != null) {
-                    android.util.Log.d("ROLEPLAY", "✅ Correction display text: '$correctionText'")
-                } else {
-                    android.util.Log.d("ROLEPLAY", "❌ toDisplayString() returned NULL - correction will NOT be shown!")
-                    android.util.Log.d("ROLEPLAY", "This means the correction format doesn't match any case in toDisplayString()")
-                }
-                android.util.Log.d("ROLEPLAY", "═══════════════════════════════════════")
-
-                // Update with response
-                _state.update { s ->
-                    val updated = s.messages.toMutableList()
-                    val lastIdx = updated.indexOfLast { it.role == "assistant" && it.streaming }
-                    if (lastIdx >= 0) {
-                        updated[lastIdx] = updated[lastIdx].copy(
-                            text = response.aiMessage,
-                            correction = correctionText,
-                            streaming = false
-                        )
-                    }
-                    lastTurnCompletedFlag = response.isCompleted
-                    s.copy(
-                        messages = updated,
-                        sending = false,
-                        currentStage = response.currentStage,
-                        stageDescription = null
-                    )
-                }
-
-                // If roleplay is completed, optionally speak completion message
-                if (response.isCompleted) {
-                    kotlinx.coroutines.delay(1000)
-                }
-
-            } catch (t: Throwable) {
-                android.util.Log.e("ROLEPLAY", "═══════════════════════════════════════")
-                android.util.Log.e("ROLEPLAY", "❌ ROLEPLAY TURN FAILED")
-                android.util.Log.e("ROLEPLAY", "Error type: ${t.javaClass.simpleName}")
-                android.util.Log.e("ROLEPLAY", "Error message: ${t.message}")
-                android.util.Log.e("ROLEPLAY", "Stack trace:", t)
-                android.util.Log.e("ROLEPLAY", "═══════════════════════════════════════")
-
-                val errorMsg = when {
-                    t.message?.contains("404") == true ->
-                        "Server error: /roleplay/turn endpoint not found. Check server."
-                    t.message?.contains("500") == true ->
-                        "Server error (500). Check server logs for Azure configuration or roleplay_referee.py errors."
-                    t.message?.contains("Connection refused") == true || t.message?.contains("failed to connect") == true ->
-                        "Cannot connect to server. Check server is running and network config."
-                    t.message?.contains("offline") == true ->
-                        "Server offline. Update ngrok URL or start server."
-                    else -> "Error: ${t.message}"
-                }
-
-                _state.update { s ->
-                    val updated = s.messages.toMutableList()
-                    val lastIdx = updated.indexOfLast { it.role == "assistant" && it.streaming }
-                    if (lastIdx >= 0) {
-                        updated[lastIdx] = updated[lastIdx].copy(
-                            text = errorMsg,
-                            streaming = false
-                        )
-                    }
-                    s.copy(messages = updated, sending = false, error = errorMsg)
-                }
-            }
-        }
-    }
-
-    fun onMicTapped() {
-        if (state.value.recording) stopRecording() else startRecording()
     }
 
     private fun startRecording() {
-        _state.update { it.copy(recording = true, error = null, input = "") }
+        micPreSpeechInput = state.value.input.trimEnd()
+        _state.update { it.copy(micState = MicState.Listening, error = null) }
         stt.start(
             onPartial = { partial ->
-                android.util.Log.d("ROLEPLAY_STT", "Partial: $partial")
-                _state.update { it.copy(input = partial) }
+                val normalized = partial.trim()
+                val nextInput = if (normalized.isBlank()) micPreSpeechInput else mergeSpeechWithBase(normalized)
+                _state.update { it.copy(input = nextInput) }
             },
             onFinal = { final ->
-                android.util.Log.d("ROLEPLAY_STT", "Final: $final")
-                _state.update { it.copy(recording = false, input = "") }
-                if (final.isNotBlank() && state.value.sessionStarted) {
-                    sendInternal(final)
-                }
+                _state.update { it.copy(micState = MicState.Processing) }
+                val normalized = final.trim()
+                val nextInput = if (normalized.isBlank()) micPreSpeechInput else mergeSpeechWithBase(normalized)
+                micPreSpeechInput = ""
+                _state.update { it.copy(input = nextInput, micState = MicState.Idle) }
             },
             onError = { e ->
-                android.util.Log.e("ROLEPLAY_STT", "Error: $e")
-                _state.update { it.copy(recording = false, error = e, input = "") }
+                val sanitized = mapRoleplayError(Throwable(e))
+                micPreSpeechInput = ""
+                _state.update { it.copy(micState = MicState.Error, error = sanitized) }
             }
         )
     }
@@ -388,18 +389,27 @@ class RoleplayVm @Inject constructor(
     private fun stopRecording() {
         android.util.Log.d("ROLEPLAY_STT", "Manually stopping recording")
         stt.stop()
-        _state.update { it.copy(recording = false, input = "") }
+        micPreSpeechInput = ""
+        _state.update { it.copy(micState = MicState.Idle) }
     }
 
+    // Remove old private startRecording/stopRecording implementations
+
+    fun onMicTapped() {
+        when (state.value.micState) {
+            MicState.Listening -> stopRecording()
+            MicState.Processing -> Unit // ignore while processing
+            MicState.Error, MicState.Idle -> startRecording()
+        }
+    }
+
+    // Provide TTS helpers required by LegacyRoleplayScreen
     fun speakMessage(text: String) {
-        // Stop any ongoing TTS to prevent echo/overlap
         tts.stop()
-        tts.speak(text)
+        if (text.isNotBlank()) tts.speak(text)
     }
 
     fun stopTts() {
         tts.stop()
     }
-
-    private fun gen() = System.nanoTime().toString()
 }

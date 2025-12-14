@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.ui.components.TypingIndicator
+import com.example.myapplication.ui.common.MicState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,30 +140,60 @@ fun ChatScreen(vm: ChatVm) {
                         onClick = { if (showSend) vm.send() else vm.onMicTapped() },
                         modifier = Modifier.size(44.dp),
                         colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = if (showSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+                            containerColor = when {
+                                showSend -> MaterialTheme.colorScheme.primary
+                                state.micState == MicState.Listening -> MaterialTheme.colorScheme.errorContainer
+                                else -> MaterialTheme.colorScheme.secondaryContainer
+                            }
                         )
                     ) {
-                        AnimatedContent(showSend, label = "send-mic") { send ->
-                            Icon(
-                                if (send) Icons.AutoMirrored.Filled.Send else Icons.Filled.Mic,
-                                contentDescription = if (send) "Send" else "Mic",
-                                tint = if (showSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
-                            )
+                        AnimatedContent(showSend to state.micState, label = "send-mic") { (send, mic) ->
+                            when {
+                                send -> Icon(
+                                    Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send",
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                                mic == MicState.Listening -> Icon(Icons.Filled.Mic, contentDescription = "Stop Listening", tint = MaterialTheme.colorScheme.error)
+                                mic == MicState.Processing -> CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                mic == MicState.Error -> Icon(Icons.Filled.Mic, contentDescription = "Mic Error", tint = MaterialTheme.colorScheme.error)
+                                else -> Icon(
+                                    Icons.Filled.Mic,
+                                    contentDescription = "Mic",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
                         }
                     }
                 }
-                if (state.recording) {
-                    Text(
+                when (state.micState) {
+                    MicState.Listening -> Text(
                         "Listening… tap mic to stop",
                         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelSmall
                     )
+                    MicState.Processing -> Text(
+                        "Processing speech…",
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    MicState.Error -> state.error?.let { err ->
+                        Text(
+                            err,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    else -> Unit
                 }
-                state.error?.let { err ->
+                if (state.error != null && state.micState != MicState.Error) {
                     Text(
-                        err,
+                        state.error!!,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelSmall

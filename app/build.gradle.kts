@@ -69,6 +69,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
+    
+    // Splash Screen
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6")
 
     // Ktor (stable + matches Kotlin 1.9.x)

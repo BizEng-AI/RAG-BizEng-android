@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.myapplication"
+    namespace = "com.bizenglish.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.myapplication"
+        applicationId = "com.bizenglish.app"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -22,6 +22,8 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:8020\"")
+            buildConfigField("String", "AZURE_SPEECH_KEY", "\"\"")
+            buildConfigField("String", "AZURE_SPEECH_REGION", "\"eastasia\"")
             isMinifyEnabled = false
         }
         release {
@@ -31,6 +33,8 @@ android {
                 "proguard-rules.pro"
             )
             buildConfigField("String", "BASE_URL", "\"https://your-prod-host\"")
+            buildConfigField("String", "AZURE_SPEECH_KEY", "\"\"")
+            buildConfigField("String", "AZURE_SPEECH_REGION", "\"eastasia\"")
         }
     }
 

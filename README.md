@@ -1,4 +1,4 @@
-![photo_2026-04-02_21-21-27](https://github.com/user-attachments/assets/330d9ff7-4bc0-4d71-a189-7edb9ebfa707)# BizEng Studio
+# BizEng Studio
 
 Business English practice app focused on **real-world communication**, not passive learning.
 
@@ -9,9 +9,6 @@ Download the latest APK from Releases:
 👉 https://github.com/YOUR-USERNAME/YOUR-REPO/releases
 
 Install it on your Android device and try it directly.
-
----![photo_2026-04-02_21-21-31 - Copy](https://github.com/user-attachments/assets/74c84eb7-5000-47ba-be6a-59ccc3058f0d)
-
 
 ## What it does
 

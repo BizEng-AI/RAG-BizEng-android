@@ -6,7 +6,7 @@ Business English practice app focused on **real-world communication**, not passi
 
 Download the latest APK from Releases:
 
-👉 https://github.com/YOUR-USERNAME/YOUR-REPO/releases
+👉 [https://github.com/YOUR-USERNAME/YOUR-REPO/releases](https://github.com/BizEng-AI/RAG-BizEng-android/releases/download/1.0/BizEngChatApp.apk)
 
 Install it on your Android device and try it directly.
 
